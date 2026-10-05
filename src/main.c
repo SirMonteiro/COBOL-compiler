@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <getopt.h>
 
 typedef struct __attribute__((packed)) {
     char seq_num[6];   // Columns 1-6   (offset 0)
@@ -19,6 +20,21 @@ typedef struct {
     short area_b_len;
     short area_b_offset;
 } LINE;
+
+#ifndef GIT_VERSION
+#define GIT_VERSION "unknown"
+#endif
+
+void print_help(const char *prog_name) {
+    printf("Usage: %s [options] file...\n", prog_name);
+    printf("A WIP COBOL very simple compiler\n\n");
+    printf("Options:\n");
+    printf("  -h, --help            Display this information.\n");
+    printf("  -v, --version         Display compiler version information.\n");
+    printf("  -o <file>, --output   Place the output into <file>.\n");
+    printf("  -d, --debug           Display debug tagged lines.\n");
+    printf("  -c, --comment         Display comments.\n");
+}
 
 short extract(const char *src, short *len) {
     if (!src || *len == 0) {
@@ -115,9 +131,40 @@ LINE *parse_line(char *line) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        printf("Uso: %s <arquivo_de_entrada>\n", argv[0]);
+    short opt;
+
+    static struct option long_options[] = {
+        {"help",    no_argument,        0, 'h'},
+        {"version", no_argument,        0, 'v'},
+        {"output",  required_argument,  0, 'o'},
+        {"debug",   no_argument,        0, 'd'},
+        {"comment", no_argument,        0, 'c'},
+        {0,         0,                  0,  0}
+    };
+
+    if (argc < 2) {
+        print_help(argv[0]);
         exit(EXIT_FAILURE);
+    }
+
+    while ((opt = getopt_long(argc, argv, "hvodc:", long_options, NULL)) != -1) {
+        switch (opt) {
+            case 'h':
+                print_help(argv[0]);
+                exit(EXIT_SUCCESS);
+            case 'v':
+                printf("Version %s\n", GIT_VERSION);
+                exit(EXIT_SUCCESS);
+            case 'o':
+                break;
+            case 'd':
+                break;
+            case 'c':
+                break;
+            default:
+                print_help(argv[0]);
+                exit(EXIT_FAILURE);
+        }
     }
 
     FILE *cobolSrc = fopen(argv[1], "r");

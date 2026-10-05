@@ -18,9 +18,9 @@ O analisador léxico deve converter o fluxo de caracteres de entrada em um fluxo
 
 * **Colunas 1-6:** Indicador de Sequência (*Sequence Number Area*) — Ignorado ou usado para ordenação.
 * **Coluna 7:** Indicador de Indicador (*Indicator Area*):
-* `*` ou `/` : Linha de comentário.
-* `-` : Continuação de literal string da linha anterior.
-* `D` : Linha de depuração (*debugging line*).
+  * `*` ou `/` : Linha de comentário.
+  * `-` : Continuação de literal string da linha anterior.
+  * `D` : Linha de depuração (*debugging line*).
 
 
 * **Colunas 8-11:** Área A (Área de início de divisões, seções, parágrafos e níveis lógicos de dados como `01` e `77`).
@@ -31,8 +31,8 @@ O analisador léxico deve converter o fluxo de caracteres de entrada em um fluxo
 
 * **Palavras-Chave Reservadas:** `IDENTIFICATION`, `ENVIRONMENT`, `DATA`, `PROCEDURE`, `DIVISION`, `SECTION`, `DISPLAY`, `ACCEPT`, `PERFORM`, `STOP`, `RUN`, `IF`, `ELSE`, `MOVE`.
 * **Literais:**
-* **Numéricos:** Cadeias de dígitos opcionalmente precedidas por sinal (`+` ou `-`) e com ponto decimal interno (ex: `-123.45`).
-* **Alfanuméricos:** Strings delimitadas por aspas simples (`'`) ou duplas (`"`).
+  * **Numéricos:** Cadeias de dígitos opcionalmente precedidas por sinal (`+` ou `-`) e com ponto decimal interno (ex: `-123.45`).
+  * **Alfanuméricos:** Strings delimitadas por aspas simples (`'`) ou duplas (`"`).
 
 
 * **Identificadores (*User-Defined Words*):** Nomes de variáveis ou parágrafos (até 30 caracteres, contendo `A-Z`, `0-9` e hífen `-`, não podendo iniciar nem terminar com hífen).

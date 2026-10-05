@@ -2,13 +2,14 @@ BIN := cbc
 
 SRC_DIR := src
 INC_DIR := include
+GIT_VERSION := $(shell git describe --tags --always --dirty)
 
 SRCS := $(wildcard $(SRC_DIR)/*.c)
 OBJS := $(SRCS:.c=.o)
 
 CC ?= gcc
 RM := rm
-CFLAGS := -O3 -Wall -Wformat -I\$(INC_DIR)
+CFLAGS := -O3 -Wall -Wformat -I\$(INC_DIR) -DGIT_VERSION=\"$(GIT_VERSION)\"
 LDLIBS :=
 
 .PHONY: all
