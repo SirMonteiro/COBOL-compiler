@@ -15,6 +15,7 @@ typedef struct __attribute__((packed)) {
 
 typedef struct {
     int seq_num;
+    char indicator;
     short area_a_len;
     short area_a_offset;
     short area_b_len;
@@ -25,6 +26,25 @@ typedef struct {
 #define GIT_VERSION "unknown"
 #endif
 
+typedef struct {
+    bool display_comments;
+    bool include_debug;
+} OPTS;
+
+typedef enum {
+    TOKEN_KEYWORD,
+    TOKEN_IDENTIFIER,
+    TOKEN_LITERAL_NUMERIC,
+    TOKEN_LITERAL_ALPHANUMERIC,
+    TOKEN_PERIOD,       // '.'
+    TOKEN_COMMA,        // ','
+    TOKEN_SEMICOLON,    // ';'
+    TOKEN_LPAREN,       // '('
+    TOKEN_RPAREN,       // ')'
+    TOKEN_UNKNOWN,
+    TOKEN_EOF
+} TOKENTYPE;
+
 void print_help(const char *prog_name) {
     printf("Usage: %s [options] file...\n", prog_name);
     printf("A WIP COBOL very simple compiler\n\n");
@@ -32,7 +52,7 @@ void print_help(const char *prog_name) {
     printf("  -h, --help            Display this information.\n");
     printf("  -v, --version         Display compiler version information.\n");
     printf("  -o <file>, --output   Place the output into <file>.\n");
-    printf("  -d, --debug           Display debug tagged lines.\n");
+    printf("  -d, --debug           Add debugging lines in compilation.\n");
     printf("  -c, --comment         Display comments.\n");
 }
 
@@ -59,7 +79,7 @@ short extract(const char *src, short *len) {
     return i;
 }
 
-LINE *parse_line(char *line) {
+LINE *read_line(char *line) {
     if (!line) return NULL;
     short line_len = strlen(line);
     while (line_len > 0 && (line[line_len - 1] == '\n' || line[line_len - 1] == '\r')) {
@@ -81,25 +101,26 @@ LINE *parse_line(char *line) {
     res->seq_num = line_number;
 
     if (line_len == 6) return res;
+    res->indicator = separated_line->indicator;
 
-    if (separated_line->indicator != ' ') {
-        switch (separated_line->indicator) {
-            case '*':
-            case '/':
-                printf("[COMMENT] Line %d, %s", line_number, separated_line->area_a); // Read area_a until end of line
-                return res;
-                break;
-            case 'D':
-                printf("[DEBUG LINE %d] %s", line_number, separated_line->area_a); // Read area_a until end of line
-                break;
-            case '-':
-                printf("[WIP] Continuação de literal string da linha anterior.");
-                break;
-            default:
-                fprintf(stderr, "[READING ERROR] Unknown indicator on line %d", line_number);
-                break;
-        }
-    }
+    // if (separated_line->indicator != ' ') {
+    //     switch (separated_line->indicator) {
+    //         case '*':
+    //         case '/':
+    //             printf("[COMMENT] Line %d, %s", line_number, separated_line->area_a); // Read area_a until end of line
+    //             return res;
+    //             break;
+    //         case 'D':
+    //             printf("[DEBUG LINE %d] %s", line_number, separated_line->area_a); // Read area_a until end of line
+    //             break;
+    //         case '-':
+    //             printf("[WIP] Continuação de literal string da linha anterior.");
+    //             break;
+    //         default:
+    //             fprintf(stderr, "[READING ERROR] Unknown indicator on line %d", line_number);
+    //             break;
+    //     }
+    // }
 
 
     if (line_len > 7) {
@@ -131,7 +152,14 @@ LINE *parse_line(char *line) {
 }
 
 int main(int argc, char **argv) {
-    short opt;
+    if (argc < 2) {
+        print_help(argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    int opt;
+    OPTS opts = {false, false};
+    const char *output_file = NULL;
 
     static struct option long_options[] = {
         {"help",    no_argument,        0, 'h'},
@@ -142,12 +170,7 @@ int main(int argc, char **argv) {
         {0,         0,                  0,  0}
     };
 
-    if (argc < 2) {
-        print_help(argv[0]);
-        exit(EXIT_FAILURE);
-    }
-
-    while ((opt = getopt_long(argc, argv, "hvodc:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hvo:dc", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_help(argv[0]);
@@ -156,10 +179,13 @@ int main(int argc, char **argv) {
                 printf("Version %s\n", GIT_VERSION);
                 exit(EXIT_SUCCESS);
             case 'o':
+                output_file = optarg;
                 break;
             case 'd':
+                opts.include_debug = true;
                 break;
             case 'c':
+                opts.display_comments = true;
                 break;
             default:
                 print_help(argv[0]);
@@ -167,25 +193,45 @@ int main(int argc, char **argv) {
         }
     }
 
-    FILE *cobolSrc = fopen(argv[1], "r");
-    if (!cobolSrc) {
-        fprintf(stderr, "[main] ERROR - Falha ao abrir arquivo em \"%s\".\n", argv[1]);
+    if (optind >= argc) {
+        fprintf(stderr, "[main] ERROR - No input file provided.\n");
         exit(EXIT_FAILURE);
     }
 
-    char buffer[83];
+    FILE *out = stdout;
+    if (output_file) {
+        out = fopen(output_file, "w");
+        if (!out) {
+            fprintf(stderr, "[main] ERROR: Failed to open output file \"%s\".\n", output_file);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    const char *input_path = argv[optind];
+    FILE *cobolSrc = fopen(input_path, "r");
+    if (!cobolSrc) {
+        fprintf(stderr, "[main] ERROR: Failed to open input file \"%s\".\n", argv[1]);
+        exit(EXIT_FAILURE);
+    }
+
+    char buffer[256];
+    int lines = 0;
 
     // Read the first line into buffer and ensure it succeeded
     while (fgets(buffer, sizeof(buffer), cobolSrc) != NULL) {
-            LINE *parsed = parse_line(buffer);
-            if (parsed) {
-                printf("Line Seq : %06d\n", parsed->seq_num);
-                printf("Area A   : \"%.*s\"\n", parsed->area_a_len, buffer + parsed->area_a_offset);
-                printf("Area B   : \"%.*s\"\n\n", parsed->area_b_len, buffer + parsed->area_b_offset);
-                free(parsed);
-            }
+        lines++;
+        LINE *line = read_line(buffer);
+        if (line) {
+            printf("Line Seq : %06d\n", line->seq_num);
+            printf("Area A   : \"%.*s\"\n", line->area_a_len, buffer + line->area_a_offset);
+            printf("Area B   : \"%.*s\"\n\n", line->area_b_len, buffer + line->area_b_offset);
+            free(line);
         }
+    }
+
+    printf("Finish processing %d lines!\n", lines);
 
     fclose(cobolSrc);
+    if (out != stdout) fclose(out);
     return EXIT_SUCCESS;
 }
