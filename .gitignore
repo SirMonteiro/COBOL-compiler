@@ -1,6 +1,7 @@
 # Custom
 
 cbc
+lex.yy.c
 
 ## tmp
 
@@ -65,4 +66,3 @@ Mkfile.old
 dkms.conf
 
 # End of https://www.toptal.com/developers/gitignore/api/c
-

@@ -1,49 +1,15 @@
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <getopt.h>
 
-typedef struct __attribute__((packed)) {
-    char seq_num[6];   // Columns 1-6   (offset 0)
-    char indicator;    // Column 7      (offset 6)
-    char area_a[4];    // Columns 8-11  (offset 7)
-    char area_b[61];   // Columns 12-72 (offset 11)
-    char comment[8];   // Columns 73-80 (offset 72)
-} COBOL_COLUMNS;
-
-typedef struct {
-    int seq_num;
-    char indicator;
-    short area_a_len;
-    short area_a_offset;
-    short area_b_len;
-    short area_b_offset;
-} LINE;
+#include "read.h"
+#include "lexer.h"
 
 #ifndef GIT_VERSION
 #define GIT_VERSION "unknown"
 #endif
-
-typedef struct {
-    bool display_comments;
-    bool include_debug;
-} OPTS;
-
-typedef enum {
-    TOKEN_KEYWORD,
-    TOKEN_IDENTIFIER,
-    TOKEN_LITERAL_NUMERIC,
-    TOKEN_LITERAL_ALPHANUMERIC,
-    TOKEN_PERIOD,       // '.'
-    TOKEN_COMMA,        // ','
-    TOKEN_SEMICOLON,    // ';'
-    TOKEN_LPAREN,       // '('
-    TOKEN_RPAREN,       // ')'
-    TOKEN_UNKNOWN,
-    TOKEN_EOF
-} TOKENTYPE;
 
 void print_help(const char *prog_name) {
     printf("Usage: %s [options] file...\n", prog_name);
@@ -54,101 +20,6 @@ void print_help(const char *prog_name) {
     printf("  -o <file>, --output   Place the output into <file>.\n");
     printf("  -d, --debug           Add debugging lines in compilation.\n");
     printf("  -c, --comment         Display comments.\n");
-}
-
-short extract(const char *src, short *len) {
-    if (!src || *len == 0) {
-        *len = 0;
-        return 0;
-    }
-
-    // Find first non-space string index
-    short i = 0;
-    while (i < *len && isspace((unsigned char) src[i])) i++;
-
-    if (i == *len) {
-        *len = 0;
-        return 0;
-    };
-    // Find last non-space string index
-    short j = *len - 1;
-    while (j > i && isspace((unsigned char) src[j])) j--;
-
-    short area_len = j - i + 1;
-    *len = area_len;
-    return i;
-}
-
-LINE *read_line(char *line) {
-    if (!line) return NULL;
-    short line_len = strlen(line);
-    while (line_len > 0 && (line[line_len - 1] == '\n' || line[line_len - 1] == '\r')) {
-        line[--line_len] = '\0';
-    }
-    if (line_len < 6) return NULL;
-
-    COBOL_COLUMNS *separated_line = (COBOL_COLUMNS *)line;
-    char seq[7];
-    memcpy(seq, separated_line->seq_num, 6);
-    seq[6] = '\0';
-    int line_number = atoi(seq);
-
-    LINE *res = calloc(1, sizeof(LINE));
-    if (!res) {
-        fprintf(stderr, "[ERROR] Allocate of line %d area offsets", line_number);
-        exit(EXIT_FAILURE);
-    }
-    res->seq_num = line_number;
-
-    if (line_len == 6) return res;
-    res->indicator = separated_line->indicator;
-
-    // if (separated_line->indicator != ' ') {
-    //     switch (separated_line->indicator) {
-    //         case '*':
-    //         case '/':
-    //             printf("[COMMENT] Line %d, %s", line_number, separated_line->area_a); // Read area_a until end of line
-    //             return res;
-    //             break;
-    //         case 'D':
-    //             printf("[DEBUG LINE %d] %s", line_number, separated_line->area_a); // Read area_a until end of line
-    //             break;
-    //         case '-':
-    //             printf("[WIP] Continuação de literal string da linha anterior.");
-    //             break;
-    //         default:
-    //             fprintf(stderr, "[READING ERROR] Unknown indicator on line %d", line_number);
-    //             break;
-    //     }
-    // }
-
-
-    if (line_len > 7) {
-        short len = line_len - 7;
-        if (len > 4) len = 4;
-        short offset = extract(separated_line->area_a, &len);
-        res->area_a_offset = offset + 7;
-        res->area_a_len = len;
-    } else {
-        res->area_a_offset = 0;
-        res->area_a_len = 0;
-        res->area_b_offset = 0;
-        res->area_b_len = 0;
-        return res;
-    }
-
-    if (line_len > 11) {
-        short len = line_len - 11;
-        if (len > 61) len = 61;
-        short offset = extract(separated_line->area_b, &len);
-        res->area_b_offset = offset + 11;
-        res->area_b_len = len;
-    } else {
-        res->area_b_offset = 0;
-        res->area_b_len = 0;
-    }
-
-    return res;
 }
 
 int main(int argc, char **argv) {
@@ -194,7 +65,7 @@ int main(int argc, char **argv) {
     }
 
     if (optind >= argc) {
-        fprintf(stderr, "[main] ERROR - No input file provided.\n");
+        fprintf(stderr, "[S] ERROR - No input file provided.\n");
         exit(EXIT_FAILURE);
     }
 
@@ -202,7 +73,7 @@ int main(int argc, char **argv) {
     if (output_file) {
         out = fopen(output_file, "w");
         if (!out) {
-            fprintf(stderr, "[main] ERROR: Failed to open output file \"%s\".\n", output_file);
+            fprintf(stderr, "[S] ERROR: Failed to open output file \"%s\".\n", output_file);
             exit(EXIT_FAILURE);
         }
     }
@@ -210,26 +81,43 @@ int main(int argc, char **argv) {
     const char *input_path = argv[optind];
     FILE *cobolSrc = fopen(input_path, "r");
     if (!cobolSrc) {
-        fprintf(stderr, "[main] ERROR: Failed to open input file \"%s\".\n", argv[1]);
+        fprintf(stderr, "[S] ERROR: Failed to open input file \"%s\".\n", argv[1]);
         exit(EXIT_FAILURE);
     }
 
-    char buffer[256];
-    int lines = 0;
+    char raw_buffer[256];
 
-    // Read the first line into buffer and ensure it succeeded
-    while (fgets(buffer, sizeof(buffer), cobolSrc) != NULL) {
-        lines++;
-        LINE *line = read_line(buffer);
-        if (line) {
-            printf("Line Seq : %06d\n", line->seq_num);
-            printf("Area A   : \"%.*s\"\n", line->area_a_len, buffer + line->area_a_offset);
-            printf("Area B   : \"%.*s\"\n\n", line->area_b_len, buffer + line->area_b_offset);
-            free(line);
+    while (fgets(raw_buffer, sizeof(raw_buffer), cobolSrc) != NULL) {
+        COBOL_LINE parsed_line;
+
+        if (!read_cobol_line(&opts, raw_buffer, &parsed_line)) {
+            fprintf(stderr,
+                    "[S] Indicator Error (Seq %06d): Invalid indicator '%c' in Column 7.\n",
+                    parsed_line.seq_num, parsed_line.indicator);
+            continue;
+        }
+
+        switch (parsed_line.status) {
+            case LINE_STATUS_CONTINUATION:
+                /* String continuation ('-') handling: currently scans continuation slice */
+                fprintf(out, "[W] Continuation line detected at Seq %06d\n",
+                        parsed_line.seq_num);
+            case LINE_STATUS_CODE:
+                lexer_scan_cobol_line(parsed_line.code_slice, parsed_line.seq_num, out);
+                break;
+            case LINE_STATUS_COMMENT:
+                if (opts.display_comments) {
+                    fprintf(out, "[I] Comment (Seq %06d): %s\n",
+                            parsed_line.seq_num, &raw_buffer[7]);
+                }
+                break;
+            case LINE_STATUS_EMPTY:
+            case LINE_STATUS_DEBUG_SKIPPED:
+                break;
+            default:
+                break;
         }
     }
-
-    printf("Finish processing %d lines!\n", lines);
 
     fclose(cobolSrc);
     if (out != stdout) fclose(out);
