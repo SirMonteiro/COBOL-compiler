@@ -1,0 +1,3 @@
+[submodule "exemplos"]
+	path = exemplos
+	url = git@github.com:ebasso/cobol-exemplos.git
