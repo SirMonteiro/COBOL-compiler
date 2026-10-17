@@ -23,6 +23,7 @@ typedef struct {
     LINE_STATUS status;
     /* Preserves exact spacing for Columns 8-72 so Flex knows exact column numbers */
     char code_slice[66]; // Columns 8-72 + \0
+    char comment[80];    // Comment text (cols 8-80), only set for LINE_STATUS_COMMENT
 } COBOL_LINE;
 
 bool read_cobol_line(const OPTS *opts, const char *raw_line, COBOL_LINE *out_line);

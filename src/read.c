@@ -7,6 +7,23 @@
 #define SEQ_LEN     6
 #define CODE_START  7
 #define CODE_END    72
+#define TAB_WIDTH   8   /*  match GnuCOBOL */
+#define LINE_MAX_EXP 1024
+
+/* Expand tabs to spaces to correct column numbers. */
+static size_t expand_tabs(const char *src, size_t len, char *dst, size_t size) {
+    size_t o = 0;
+    for (size_t i = 0; i < len && o + 1 < size; i++) {
+        if (src[i] == '\t') {
+            size_t next = (o / TAB_WIDTH + 1) * TAB_WIDTH;
+            while (o < next && o + 1 < size) dst[o++] = ' ';
+        } else {
+            dst[o++] = src[i];
+        }
+    }
+    dst[o] = '\0';
+    return o;
+}
 
 static bool all_blank(const char *s, size_t n) {
     for (size_t i = 0; i < n; i++)
@@ -40,9 +57,14 @@ bool read_cobol_line(const OPTS *opts, const char *raw_line, COBOL_LINE *out_lin
 
     const bool include_debug = opts && opts->include_debug;
 
-    size_t len = strlen(raw_line);
-    while (len > 0 && (raw_line[len - 1] == '\n' || raw_line[len - 1] == '\r'))
-        len--;
+    size_t rawlen = strlen(raw_line);
+    while (rawlen > 0 && (raw_line[rawlen - 1] == '\n' || raw_line[rawlen - 1] == '\r'))
+        rawlen--;
+
+    /* Work on a tab-expanded copy from here on. */
+    char expanded[LINE_MAX_EXP];
+    size_t len = expand_tabs(raw_line, rawlen, expanded, sizeof expanded);
+    raw_line = expanded;
 
     out_line->seq_num = parse_seq(raw_line, len);
 
@@ -61,9 +83,14 @@ bool read_cobol_line(const OPTS *opts, const char *raw_line, COBOL_LINE *out_lin
             out_line->status = LINE_STATUS_CONTINUATION;
             break;
         case '*':
-        case '/':
+        case '/': {
             out_line->status = LINE_STATUS_COMMENT;
+            size_t cn = len > CODE_START ? len - CODE_START : 0;
+            if (cn > sizeof out_line->comment - 1) cn = sizeof out_line->comment - 1;
+            memcpy(out_line->comment, raw_line + CODE_START, cn);
+            out_line->comment[cn] = '\0';
             return true;
+        }
         case 'D':
         case 'd':
             if (!include_debug) {
