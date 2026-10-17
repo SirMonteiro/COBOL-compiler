@@ -78,48 +78,76 @@ int main(int argc, char **argv) {
         }
     }
 
-    const char *input_path = argv[optind];
-    FILE *cobolSrc = fopen(input_path, "r");
-    if (!cobolSrc) {
-        fprintf(stderr, "[S] ERROR: Failed to open input file \"%s\".\n", argv[1]);
-        exit(EXIT_FAILURE);
-    }
+    int status = EXIT_SUCCESS;
+    const int nfiles = argc - optind;
 
-    char raw_buffer[256];
-
-    while (fgets(raw_buffer, sizeof(raw_buffer), cobolSrc) != NULL) {
-        COBOL_LINE parsed_line;
-
-        if (!read_cobol_line(&opts, raw_buffer, &parsed_line)) {
-            fprintf(stderr,
-                    "[S] Indicator Error (Seq %06d): Invalid indicator '%c' in Column 7.\n",
-                    parsed_line.seq_num, parsed_line.indicator);
+    for (int fi = optind; fi < argc; fi++) {
+        const char *input_path = argv[fi];
+        FILE *cobolSrc = fopen(input_path, "r");
+        if (!cobolSrc) {
+            fprintf(stderr, "[S] ERROR: Failed to open input file \"%s\".\n", input_path);
+            status = EXIT_FAILURE;
             continue;
         }
 
-        switch (parsed_line.status) {
-            case LINE_STATUS_CONTINUATION:
-                /* String continuation ('-') handling: currently scans continuation slice */
-                fprintf(out, "[W] Continuation line detected at Seq %06d\n",
-                        parsed_line.seq_num);
-            case LINE_STATUS_CODE:
-                lexer_scan_cobol_line(parsed_line.code_slice, parsed_line.seq_num, out);
-                break;
-            case LINE_STATUS_COMMENT:
-                if (opts.display_comments) {
-                    fprintf(out, "[I] Comment (Seq %06d): %s\n",
-                            parsed_line.seq_num, &raw_buffer[7]);
-                }
-                break;
-            case LINE_STATUS_EMPTY:
-            case LINE_STATUS_DEBUG_SKIPPED:
-                break;
-            default:
-                break;
+        if (nfiles > 1) fprintf(out, "### %s\n", input_path);
+        lexer_reset();
+
+        char raw_buffer[256];
+        int line_no = 0;
+
+        while (fgets(raw_buffer, sizeof(raw_buffer), cobolSrc) != NULL) {
+            line_no++;
+
+            /* Limit column number to buffer size*/
+            size_t n = strlen(raw_buffer);
+            if (n > 0 && raw_buffer[n - 1] != '\n' && !feof(cobolSrc)) {
+                int c;
+                while ((c = fgetc(cobolSrc)) != '\n' && c != EOF) { }
+            }
+
+            COBOL_LINE parsed_line;
+            bool ok = read_cobol_line(&opts, raw_buffer, &parsed_line);
+
+            /* Report the input line number in result. */
+            if (parsed_line.seq_num == 0) parsed_line.seq_num = line_no;
+
+            if (!ok) {
+                fflush(out);
+                fprintf(stderr,
+                        "[S] Indicator Error (%s, Seq %06d): Invalid indicator '%c' in Column 7.\n",
+                        input_path, parsed_line.seq_num, parsed_line.indicator);
+                status = EXIT_FAILURE;
+                continue;
+            }
+
+            switch (parsed_line.status) {
+                case LINE_STATUS_CONTINUATION:
+                    /* String continuation ('-') handling: currently scans continuation slice */
+                    fprintf(out, "[W] Continuation line detected at Seq %06d\n",
+                            parsed_line.seq_num);
+                    /* fall through */
+                case LINE_STATUS_CODE:
+                    lexer_scan_cobol_line(parsed_line.code_slice, parsed_line.seq_num, out);
+                    break;
+                case LINE_STATUS_COMMENT:
+                    if (opts.display_comments) {
+                        raw_buffer[strcspn(raw_buffer, "\r\n")] = '\0';
+                        fprintf(out, "[I] Comment (Seq %06d): %s\n",
+                                parsed_line.seq_num, &raw_buffer[7]);
+                    }
+                    break;
+                case LINE_STATUS_EMPTY:
+                case LINE_STATUS_DEBUG_SKIPPED:
+                default:
+                    break;
+            }
         }
+
+        fclose(cobolSrc);
     }
 
-    fclose(cobolSrc);
     if (out != stdout) fclose(out);
-    return EXIT_SUCCESS;
+    if (lexer_error_count() > 0) status = EXIT_FAILURE;
+    return status;
 }
