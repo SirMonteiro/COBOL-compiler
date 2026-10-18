@@ -6,6 +6,7 @@
 
 #include "read.h"
 #include "lexer.h"
+#include "lexer_input.h"
 
 #ifndef GIT_VERSION
 #define GIT_VERSION "unknown"
@@ -91,7 +92,7 @@ int main(int argc, char **argv) {
         }
 
         if (nfiles > 1) fprintf(out, "### %s\n", input_path);
-        lexer_reset();
+        lexer_input_begin();
 
         char raw_buffer[256];
         int line_no = 0;
@@ -99,7 +100,8 @@ int main(int argc, char **argv) {
         while (fgets(raw_buffer, sizeof(raw_buffer), cobolSrc) != NULL) {
             line_no++;
 
-            /* Limit column number to buffer size*/
+            /* Line longer than the buffer: only cols 1-72 matter, discard the rest
+             * so the remainder is not misread as a new line. */
             size_t n = strlen(raw_buffer);
             if (n > 0 && raw_buffer[n - 1] != '\n' && !feof(cobolSrc)) {
                 int c;
@@ -109,11 +111,11 @@ int main(int argc, char **argv) {
             COBOL_LINE parsed_line;
             bool ok = read_cobol_line(&opts, raw_buffer, &parsed_line);
 
-            /* Report the input line number in result. */
+            /* Sources without a sequence area: report the physical line number. */
             if (parsed_line.seq_num == 0) parsed_line.seq_num = line_no;
 
             if (!ok) {
-                fflush(out);
+                fflush(out);   /* keep stdout/stderr ordering when both go to one file */
                 fprintf(stderr,
                         "[S] Indicator Error (%s, Seq %06d): Invalid indicator '%c' in Column 7.\n",
                         input_path, parsed_line.seq_num, parsed_line.indicator);
@@ -123,18 +125,13 @@ int main(int argc, char **argv) {
 
             switch (parsed_line.status) {
                 case LINE_STATUS_CONTINUATION:
-                    /* String continuation ('-') handling: currently scans continuation slice */
-                    fprintf(out, "[W] Continuation line detected at Seq %06d\n",
-                            parsed_line.seq_num);
-                    /* fall through */
                 case LINE_STATUS_CODE:
-                    lexer_scan_cobol_line(parsed_line.code_slice, parsed_line.seq_num, out);
+                    lexer_input_line(&parsed_line, out);
                     break;
                 case LINE_STATUS_COMMENT:
                     if (opts.display_comments) {
-                        raw_buffer[strcspn(raw_buffer, "\r\n")] = '\0';
                         fprintf(out, "[I] Comment (Seq %06d): %s\n",
-                                parsed_line.seq_num, &raw_buffer[7]);
+                                parsed_line.seq_num, parsed_line.comment);
                     }
                     break;
                 case LINE_STATUS_EMPTY:
@@ -144,6 +141,7 @@ int main(int argc, char **argv) {
             }
         }
 
+        lexer_input_end(out);
         fclose(cobolSrc);
     }
 
