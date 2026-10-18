@@ -77,7 +77,7 @@ void emit_token(TOKENTYPE type, const char *lexeme, int start_col) {
 
 void emit_lexical_error(const char *msg, const char *lexeme, int start_col) {
     lexer_errors++;
-    /* Flush saída de token primeiro para não misturar stdout/stderr */
+    /* Flush token output first to avoid mixing stdout/stderr */
     if (lexer_out) fflush(lexer_out);
     fprintf(stderr,
             "[E] Lexical Error (Seq %06d, Col %d): %s -> \"%s\"\n",

@@ -51,7 +51,7 @@ $(BIN): $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Executa cbc em todos exemplos/*.cob e salva resultado para *.out
+# Runs cbc for every exemplos/*.cob and saves the result to *.out
 test: $(BIN)
 	@pass=0; fail=0; failed=""; \
 	for f in $(TEST_SRCS); do \
@@ -78,9 +78,9 @@ test: $(BIN)
 #   NAME.tok   our token stream (cbc stdout)
 #   NAME.cobc  cobc -fsyntax-only diagnostics (is the program itself valid COBOL?)
 #   NAME.diff  only when they differ: expected (cobc) vs actual (cbc), 80 chars/line
-# The check is "character stream equivalence": every lexeme cbc emitted, concatenated
-# with all whitespace removed and upper-cased, must equal the cobc-preprocessed source
-# with whitespace removed and upper-cased.
+# Every lexeme cbc emitted, concatenated with all whitespace removed and
+# upper-cased, must equal the cobc-preprocessed source with whitespace removed
+# and upper-cased.
 compare: $(BIN)
 	@command -v $(COBC) >/dev/null 2>&1 || { \
 		echo "error: '$(COBC)' not found. Install GnuCOBOL or run: make compare COBC=/path/to/cobc"; exit 2; }
