@@ -65,4 +65,7 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
+# Document files
+*.pdf
+
 # End of https://www.toptal.com/developers/gitignore/api/c
