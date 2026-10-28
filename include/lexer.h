@@ -2,6 +2,7 @@
 #define LEXER_H
 
 #include <stdio.h>
+#include "read.h"
 
 typedef enum {
     AREA_UNKNOWN = 0,
@@ -19,8 +20,8 @@ typedef enum {
     TOKEN_SEMICOLON,    // ';'
     TOKEN_LPAREN,       // '('
     TOKEN_RPAREN,       // ')'
-    TOKEN_COLON,        // ':'  (reference modification, e.g. X(1:3))
-    TOKEN_PICTURE,      // PIC/PICTURE character-string, e.g. S9(05)V99, -ZZZ9.99
+    TOKEN_COLON,        // ':'
+    TOKEN_PICTURE,      // PIC/PICTURE string (e.g. S9(05)V99, -ZZZ9.99)
     TOKEN_PLUS,         // '+'
     TOKEN_MINUS,        // '-'
     TOKEN_STAR,         // '*'
@@ -52,10 +53,16 @@ const char *area_to_string(COBOL_AREA area);
 const char *token_type_to_string(TOKENTYPE type);
 
 void lexer_scan_cobol_line(const char *area_ab_slice, int seq_num, FILE *out);
+void lexer_scan_cobol_line_at(const char *area_ab_slice, int seq_num, int start_col, FILE *out);
 void emit_token(TOKENTYPE type, const char *lexeme, int start_col);
 void emit_lexical_error(const char *msg, const char *lexeme, int start_col);
 void lexer_set_output_file(FILE *out);
-void lexer_reset(void);          /* call before scanning each new file */
-int  lexer_error_count(void);    /* lexical errors reported so far */
+void lexer_reset(void);
+int  lexer_error_count(void);
+
+/* Line-stream interface handling '-' continuation lines (strings and split tokens) */
+void lexer_begin_file(void);
+void lexer_process_line(const COBOL_LINE *line, FILE *out);
+void lexer_end_file(FILE *out);
 
 #endif /* LEXER_H */

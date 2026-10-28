@@ -144,13 +144,17 @@ void lexer_reset(void) {
     BEGIN(INITIAL);
 }
 
-void lexer_scan_cobol_line(const char *area_ab_slice, int seq_num, FILE *out) {
+void lexer_scan_cobol_line_at(const char *area_ab_slice, int seq_num, int start_col, FILE *out) {
     current_seq_num  = seq_num;
-    current_col      = 8;
-    token_start_col  = 8;
+    current_col      = start_col;
+    token_start_col  = start_col;
     lexer_set_output_file(out);
 
     YY_BUFFER_STATE buf = yy_scan_string(area_ab_slice);
     yylex();
     yy_delete_buffer(buf);
+}
+
+void lexer_scan_cobol_line(const char *area_ab_slice, int seq_num, FILE *out) {
+    lexer_scan_cobol_line_at(area_ab_slice, seq_num, 8, out);
 }
