@@ -8,6 +8,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "ast.h"
+#include "sema.h"
 
 #ifndef GIT_VERSION
 #define GIT_VERSION "unknown"
@@ -25,7 +26,9 @@ void print_help(const char *prog_name) {
     printf("  -d, --debug           Add debugging lines in compilation.\n");
     printf("  -c, --comment         Display comments.\n");
     printf("  -l, --lex             Run lexical analysis only and print tokens.\n");
+    printf("  -p, --parse           Stop after syntax analysis (skip semantic checks).\n");
     printf("  -a, --ast             Print the abstract syntax tree after parsing.\n");
+    printf("  -s, --symtab          Print the symbol table after semantic analysis.\n");
     printf("  -I <dir>, --include   Add copybook search directory for COPY.\n");
 }
 
@@ -39,7 +42,9 @@ int main(int argc, char **argv) {
     OPTS opts = {false, false};
     const char *output_file = NULL;
     bool lex_only = false;
+    bool parse_only = false;
     bool dump_ast = false;
+    bool dump_symtab = false;
     const char *copy_dirs[MAX_COPY_DIRS];
     int n_copy_dirs = 0;
 
@@ -50,12 +55,14 @@ int main(int argc, char **argv) {
         {"debug",   no_argument,        0, 'd'},
         {"comment", no_argument,        0, 'c'},
         {"lex",     no_argument,        0, 'l'},
+        {"parse",   no_argument,        0, 'p'},
         {"ast",     no_argument,        0, 'a'},
+        {"symtab",  no_argument,        0, 's'},
         {"include", required_argument,  0, 'I'},
         {0,         0,                  0,  0}
     };
 
-    while ((opt = getopt_long(argc, argv, "hvo:dclaI:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hvo:dclpasI:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_help(argv[0]);
@@ -75,8 +82,14 @@ int main(int argc, char **argv) {
             case 'l':
                 lex_only = true;
                 break;
+            case 'p':
+                parse_only = true;
+                break;
             case 'a':
                 dump_ast = true;
+                break;
+            case 's':
+                dump_symtab = true;
                 break;
             case 'I':
                 if (n_copy_dirs < MAX_COPY_DIRS) {
@@ -108,7 +121,7 @@ int main(int argc, char **argv) {
 
     for (int fi = optind; fi < argc; fi++) {
         const char *input_path = argv[fi];
-        if (nfiles > 1 && (lex_only || dump_ast)) {
+        if (nfiles > 1 && (lex_only || dump_ast || dump_symtab)) {
             fprintf(out, "### %s\n", input_path);
         }
 
@@ -123,7 +136,7 @@ int main(int argc, char **argv) {
             &tokens,
             copy_dirs,
             n_copy_dirs,
-            !lex_only /* expand COPY when parsing; keep raw token stream in -l mode */
+            !lex_only
         );
 
         if (!lex_ok || lexer_error_count() > 0) {
@@ -137,8 +150,21 @@ int main(int argc, char **argv) {
             ASTNode *root = parse_tokens(&tokens, input_path, &parse_errors);
             if (!root || parse_errors > 0) {
                 status = EXIT_FAILURE;
-            } else if (dump_ast) {
-                ast_print(root, out, 0);
+            } else {
+                if (dump_ast) {
+                    ast_print(root, out, 0);
+                }
+                if (!parse_only) {
+                    SymTab tab;
+                    bool sema_ok = sema_analyze(root, input_path, &tab);
+                    if (dump_symtab) {
+                        symtab_print(&tab, out);
+                    }
+                    if (!sema_ok) {
+                        status = EXIT_FAILURE;
+                    }
+                    symtab_free(&tab);
+                }
             }
             ast_free(root);
         }

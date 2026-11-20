@@ -130,7 +130,8 @@ static ASTNode *bin_node(ASTKind k, const char *op, ASTNode *a, ASTNode *b) {
 %type <node> perform_ctrl perform_after_list inspect_clauses inspect_clause
 %type <node> string_parts string_part unstring_targets unstring_target
 %type <node> search_when_list search_when call_args call_arg
-%type <node> opt_else opt_size_handlers opt_read_handlers opt_io_handlers opt_overflow_handlers opt_call_handlers
+%type <node> opt_else opt_size_handlers opt_not_size_error opt_read_handlers opt_not_at_end opt_io_handlers opt_not_invalid_key opt_overflow_handlers opt_not_overflow opt_call_handlers
+%type <node> opt_indexed_by opt_giving opt_remainder opt_into opt_from opt_call_using opt_thru opt_search_at_end opt_search_varying
 %type <node> value_literal value_item value_list subscript_list
 %type <str>  ident_word proc_name func_name relop relop_core class_type
 
@@ -505,8 +506,10 @@ data_clause
       }
     | KW_OCCURS T_NUM_LIT opt_to_num opt_times opt_depending opt_key_orders opt_indexed_by
       {
-          $$ = ast_new_ex(AST_CLAUSE, "OCCURS", $2, atoi($2), g_last_tok.seq_num, g_last_tok.column);
+          ASTNode *oc = ast_new_ex(AST_CLAUSE, "OCCURS", $2, atoi($2), g_last_tok.seq_num, g_last_tok.column);
           free($2);
+          ast_add(oc, $7);
+          $$ = oc;
       }
     | opt_usage_kw KW_COMP
       { $$ = ast_new(AST_CLAUSE, "USAGE-COMP", g_last_tok.seq_num, g_last_tok.column); }
@@ -545,7 +548,15 @@ opt_on: /* empty */ | KW_ON ;
 opt_key_orders: /* empty */ | opt_key_orders asc_or_desc opt_key opt_is data_ref_list { ast_free($5); } ;
 asc_or_desc: KW_ASCENDING | KW_DESCENDING ;
 opt_key: /* empty */ | KW_KEY ;
-opt_indexed_by: /* empty */ | KW_INDEXED opt_by data_ref_list { ast_free($3); } ;
+opt_indexed_by
+    : /* empty */ { $$ = NULL; }
+    | KW_INDEXED opt_by data_ref_list
+      {
+          ASTNode *ix = ast_new(AST_CLAUSE, "INDEXED-BY", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(ix, $3);
+          $$ = ix;
+      }
+    ;
 opt_by: /* empty */ | KW_BY ;
 leading_or_trailing: KW_LEADING | KW_TRAILING ;
 opt_separate: /* empty */ | KW_SEPARATE opt_character ;
@@ -772,7 +783,7 @@ stmt_add
     : KW_ADD rvalue_list KW_TO add_target_list opt_giving opt_size_handlers opt_end_add
       {
           ASTNode *n = ast_new(AST_STMT_ADD, NULL, g_last_tok.seq_num, g_last_tok.column);
-          ast_add(n, $2); ast_add(n, $4); ast_add(n, $6);
+          ast_add(n, $2); ast_add(n, $4); ast_add(n, $5); ast_add(n, $6);
           $$ = n;
       }
     | KW_ADD rvalue_list KW_GIVING add_target_list opt_size_handlers opt_end_add
@@ -793,7 +804,7 @@ stmt_subtract
     : KW_SUBTRACT rvalue_list KW_FROM add_target_list opt_giving opt_size_handlers opt_end_subtract
       {
           ASTNode *n = ast_new(AST_STMT_SUBTRACT, NULL, g_last_tok.seq_num, g_last_tok.column);
-          ast_add(n, $2); ast_add(n, $4); ast_add(n, $6);
+          ast_add(n, $2); ast_add(n, $4); ast_add(n, $5); ast_add(n, $6);
           $$ = n;
       }
     | KW_SUBTRACT KW_CORRESPONDING data_ref KW_FROM data_ref opt_rounded opt_size_handlers opt_end_subtract
@@ -808,7 +819,7 @@ stmt_multiply
     : KW_MULTIPLY rvalue KW_BY add_target_list opt_giving opt_size_handlers opt_end_multiply
       {
           ASTNode *n = ast_new(AST_STMT_MULTIPLY, NULL, g_last_tok.seq_num, g_last_tok.column);
-          ast_add(n, $2); ast_add(n, $4); ast_add(n, $6);
+          ast_add(n, $2); ast_add(n, $4); ast_add(n, $5); ast_add(n, $6);
           $$ = n;
       }
     ;
@@ -817,7 +828,7 @@ stmt_divide
     : KW_DIVIDE rvalue into_or_by add_target_list opt_giving opt_remainder opt_size_handlers opt_end_divide
       {
           ASTNode *n = ast_new(AST_STMT_DIVIDE, NULL, g_last_tok.seq_num, g_last_tok.column);
-          ast_add(n, $2); ast_add(n, $4); ast_add(n, $7);
+          ast_add(n, $2); ast_add(n, $4); ast_add(n, $5); ast_add(n, $6); ast_add(n, $7);
           $$ = n;
       }
     ;
@@ -845,8 +856,24 @@ add_target
     ;
 
 opt_rounded: /* empty */ | KW_ROUNDED ;
-opt_giving: /* empty */ | KW_GIVING add_target_list { ast_free($2); } ;
-opt_remainder: /* empty */ | KW_REMAINDER data_ref { ast_free($2); } ;
+opt_giving
+    : /* empty */ { $$ = NULL; }
+    | KW_GIVING add_target_list
+      {
+          ASTNode *g = ast_new(AST_CLAUSE, "GIVING", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(g, $2);
+          $$ = g;
+      }
+    ;
+opt_remainder
+    : /* empty */ { $$ = NULL; }
+    | KW_REMAINDER data_ref
+      {
+          ASTNode *r = ast_new(AST_CLAUSE, "REMAINDER", $2->seq_num, $2->col);
+          ast_add(r, $2);
+          $$ = r;
+      }
+    ;
 
 opt_size_handlers
     : /* empty */ %prec LOWER_THAN_HANDLER { $$ = NULL; }
@@ -854,6 +881,7 @@ opt_size_handlers
       {
           ASTNode *h = ast_new(AST_CLAUSE, "ON-SIZE-ERROR", g_last_tok.seq_num, g_last_tok.column);
           ast_adopt_children(h, $4);
+          ast_add(h, $5);
           $$ = h;
       }
     | KW_NOT opt_on KW_SIZE KW_ERROR stmt_list
@@ -865,8 +893,13 @@ opt_size_handlers
     ;
 
 opt_not_size_error
-    : /* empty */ %prec LOWER_THAN_HANDLER
-    | KW_NOT opt_on KW_SIZE KW_ERROR stmt_list { ast_free($5); }
+    : /* empty */ %prec LOWER_THAN_HANDLER { $$ = NULL; }
+    | KW_NOT opt_on KW_SIZE KW_ERROR stmt_list
+      {
+          ASTNode *h = ast_new(AST_CLAUSE, "NOT-ON-SIZE-ERROR", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(h, $5);
+          $$ = h;
+      }
     ;
 
 opt_end_add:      /* empty */ %prec LOWER_THAN_HANDLER | KW_END_ADD ;
@@ -982,6 +1015,7 @@ stmt_perform
       {
           ASTNode *p = ast_new(AST_STMT_PERFORM, $2, g_last_tok.seq_num, g_last_tok.column);
           free($2);
+          ast_add(p, $3);
           ast_add(p, $4);
           $$ = p;
       }
@@ -989,6 +1023,7 @@ stmt_perform
       {
           ASTNode *p = ast_new(AST_STMT_PERFORM, $2, g_last_tok.seq_num, g_last_tok.column);
           free($2);
+          ast_add(p, $3);
           $$ = p;
       }
     | KW_PERFORM perform_ctrl stmt_list KW_END_PERFORM
@@ -1007,8 +1042,13 @@ stmt_perform
     ;
 
 opt_thru
-    : /* empty */
-    | KW_THRU proc_name { free($2); }
+    : /* empty */ { $$ = NULL; }
+    | KW_THRU proc_name
+      {
+          $$ = ast_new(AST_CLAUSE, "THRU", g_last_tok.seq_num, g_last_tok.column);
+          ast_set_extra($$, $2);
+          free($2);
+      }
     ;
 
 perform_ctrl
@@ -1086,6 +1126,7 @@ stmt_read
       {
           ASTNode *r = ast_new(AST_STMT_READ, $2->text, $2->seq_num, $2->col);
           ast_add(r, $2);
+          ast_add(r, $5);
           ast_add(r, $7);
           $$ = r;
       }
@@ -1093,7 +1134,15 @@ stmt_read
 
 opt_next: /* empty */ | KW_NEXT ;
 opt_record: /* empty */ | KW_RECORD ;
-opt_into: /* empty */ | KW_INTO data_ref { ast_free($2); } ;
+opt_into
+    : /* empty */ { $$ = NULL; }
+    | KW_INTO data_ref
+      {
+          ASTNode *c = ast_new(AST_CLAUSE, "INTO", $2->seq_num, $2->col);
+          ast_add(c, $2);
+          $$ = c;
+      }
+    ;
 opt_read_key: /* empty */ | KW_KEY opt_is data_ref { ast_free($3); } ;
 
 opt_read_handlers
@@ -1102,6 +1151,7 @@ opt_read_handlers
       {
           ASTNode *h = ast_new(AST_CLAUSE, "AT-END", g_last_tok.seq_num, g_last_tok.column);
           ast_adopt_children(h, $3);
+          ast_add(h, $4);
           $$ = h;
       }
     | KW_NOT opt_at KW_END stmt_list
@@ -1114,6 +1164,7 @@ opt_read_handlers
       {
           ASTNode *h = ast_new(AST_CLAUSE, "INVALID-KEY", g_last_tok.seq_num, g_last_tok.column);
           ast_adopt_children(h, $3);
+          ast_add(h, $4);
           $$ = h;
       }
     | KW_NOT KW_INVALID opt_key stmt_list
@@ -1127,8 +1178,13 @@ opt_read_handlers
 opt_at: /* empty */ | KW_AT ;
 
 opt_not_at_end
-    : /* empty */ %prec LOWER_THAN_HANDLER
-    | KW_NOT opt_at KW_END stmt_list { ast_free($4); }
+    : /* empty */ %prec LOWER_THAN_HANDLER { $$ = NULL; }
+    | KW_NOT opt_at KW_END stmt_list
+      {
+          ASTNode *h = ast_new(AST_CLAUSE, "NOT-AT-END", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(h, $4);
+          $$ = h;
+      }
     ;
 
 opt_io_handlers
@@ -1137,6 +1193,7 @@ opt_io_handlers
       {
           ASTNode *h = ast_new(AST_CLAUSE, "INVALID-KEY", g_last_tok.seq_num, g_last_tok.column);
           ast_adopt_children(h, $3);
+          ast_add(h, $4);
           $$ = h;
       }
     | KW_NOT KW_INVALID opt_key stmt_list
@@ -1154,8 +1211,13 @@ opt_io_handlers
     ;
 
 opt_not_invalid_key
-    : /* empty */ %prec LOWER_THAN_HANDLER
-    | KW_NOT KW_INVALID opt_key stmt_list { ast_free($4); }
+    : /* empty */ %prec LOWER_THAN_HANDLER { $$ = NULL; }
+    | KW_NOT KW_INVALID opt_key stmt_list
+      {
+          ASTNode *h = ast_new(AST_CLAUSE, "NOT-INVALID-KEY", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(h, $4);
+          $$ = h;
+      }
     ;
 
 opt_end_read: /* empty */ %prec LOWER_THAN_HANDLER | KW_END_READ ;
@@ -1165,12 +1227,21 @@ stmt_write
       {
           ASTNode *w = ast_new(AST_STMT_WRITE, $2->text, $2->seq_num, $2->col);
           ast_add(w, $2);
+          ast_add(w, $3);
           ast_add(w, $5);
           $$ = w;
       }
     ;
 
-opt_from: /* empty */ | KW_FROM rvalue { ast_free($2); } ;
+opt_from
+    : /* empty */ { $$ = NULL; }
+    | KW_FROM rvalue
+      {
+          ASTNode *c = ast_new(AST_CLAUSE, "FROM", $2->seq_num, $2->col);
+          ast_add(c, $2);
+          $$ = c;
+      }
+    ;
 opt_write_adv
     : /* empty */
     | before_or_after opt_advancing adv_target
@@ -1187,7 +1258,7 @@ stmt_rewrite
     : KW_REWRITE data_ref opt_from opt_io_handlers opt_end_rewrite
       {
           ASTNode *w = ast_new(AST_STMT_REWRITE, $2->text, $2->seq_num, $2->col);
-          ast_add(w, $2); ast_add(w, $4);
+          ast_add(w, $2); ast_add(w, $3); ast_add(w, $4);
           $$ = w;
       }
     ;
@@ -1234,14 +1305,20 @@ stmt_call
       {
           ASTNode *c = ast_new(AST_STMT_CALL, NULL, g_last_tok.seq_num, g_last_tok.column);
           ast_add(c, $2);
+          ast_add(c, $3);
           ast_add(c, $5);
           $$ = c;
       }
     ;
 
 opt_call_using
-    : /* empty */
-    | KW_USING call_args { ast_free($2); }
+    : /* empty */ { $$ = NULL; }
+    | KW_USING call_args
+      {
+          ASTNode *u = ast_new(AST_CLAUSE, "USING", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(u, $2);
+          $$ = u;
+      }
     ;
 
 call_args
@@ -1433,14 +1510,19 @@ opt_pointer: /* empty */ | opt_with KW_POINTER data_ref { ast_free($3); } ;
 opt_overflow_handlers
     : /* empty */ %prec LOWER_THAN_HANDLER { $$ = NULL; }
     | opt_on KW_OVERFLOW stmt_list opt_not_overflow
-      { ASTNode *h = ast_new(AST_CLAUSE, "ON-OVERFLOW", g_last_tok.seq_num, g_last_tok.column); ast_adopt_children(h, $3); $$ = h; }
+      { ASTNode *h = ast_new(AST_CLAUSE, "ON-OVERFLOW", g_last_tok.seq_num, g_last_tok.column); ast_adopt_children(h, $3); ast_add(h, $4); $$ = h; }
     | KW_NOT opt_on KW_OVERFLOW stmt_list
       { ASTNode *h = ast_new(AST_CLAUSE, "NOT-ON-OVERFLOW", g_last_tok.seq_num, g_last_tok.column); ast_adopt_children(h, $4); $$ = h; }
     ;
 
 opt_not_overflow
-    : /* empty */ %prec LOWER_THAN_HANDLER
-    | KW_NOT opt_on KW_OVERFLOW stmt_list { ast_free($4); }
+    : /* empty */ %prec LOWER_THAN_HANDLER { $$ = NULL; }
+    | KW_NOT opt_on KW_OVERFLOW stmt_list
+      {
+          ASTNode *h = ast_new(AST_CLAUSE, "NOT-ON-OVERFLOW", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(h, $4);
+          $$ = h;
+      }
     ;
 
 opt_end_string: /* empty */ %prec LOWER_THAN_HANDLER | KW_END_STRING ;
@@ -1522,13 +1604,27 @@ stmt_search
       {
           ASTNode *s = ast_new(AST_STMT_SEARCH, $3->text, $3->seq_num, $3->col);
           ast_add(s, $3);
+          ast_add(s, $4);
+          ast_add(s, $5);
           ast_adopt_children(s, $6);
           $$ = s;
       }
     ;
 
-opt_search_varying: /* empty */ | KW_VARYING data_ref { ast_free($2); } ;
-opt_search_at_end: /* empty */ | opt_at KW_END stmt_list { ast_free($3); } ;
+opt_search_varying
+    : /* empty */ { $$ = NULL; }
+    | KW_VARYING data_ref { $$ = $2; }
+    ;
+
+opt_search_at_end
+    : /* empty */ { $$ = NULL; }
+    | opt_at KW_END stmt_list
+      {
+          ASTNode *h = ast_new(AST_CLAUSE, "AT-END", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(h, $3);
+          $$ = h;
+      }
+    ;
 
 search_when_list
     : search_when                  { $$ = ast_add(ast_new(AST_LIST, NULL, 0, 0), $1); }

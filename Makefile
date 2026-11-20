@@ -22,7 +22,7 @@ LDLIBS :=
 
 TEST_SRCS := $(sort $(wildcard cobol-exemplos/*.cob) $(wildcard exemplos/*.cbl))
 
-.PHONY: all test test-lex clean help
+.PHONY: all test test-parse test-lex clean help
 
 all: $(BIN)
 
@@ -50,6 +50,18 @@ test: $(BIN)
 	echo ""; echo "passed: $$pass  failed: $$fail"; \
 	[ $$fail -eq 0 ]
 
+test-parse: $(BIN)
+	@pass=0; fail=0; \
+	for f in $(TEST_SRCS); do \
+		if ./$(BIN) -p "$$f" >/dev/null 2>&1; then \
+			printf "  [ OK ]  %s\n" "$$f"; pass=$$((pass+1)); \
+		else \
+			printf "  [FAIL]  %s\n" "$$f"; fail=$$((fail+1)); \
+		fi; \
+	done; \
+	echo ""; echo "parse passed: $$pass  failed: $$fail"; \
+	[ $$fail -eq 0 ]
+
 test-lex: $(BIN)
 	@pass=0; fail=0; \
 	for f in $(TEST_SRCS); do \
@@ -67,8 +79,9 @@ clean:
 
 help:
 	@echo "Available targets:"
-	@echo "  all      - Build compiler (default)"
-	@echo "  test     - Lex and parse cobol-exemplos/*.cob and exemplos/*.cbl"
-	@echo "  test-lex - Run lexer only (-l) on cobol-exemplos/*.cob and exemplos/*.cbl"
-	@echo "  clean    - Remove build artifacts"
-	@echo "  help     - Show this menu"
+	@echo "  all        - Build compiler (default)"
+	@echo "  test       - Run lex + parse + semantic analysis on cobol-exemplos/*.cob and exemplos/*.cbl"
+	@echo "  test-parse - Run lex + parse only (-p) on test programs"
+	@echo "  test-lex   - Run lexer only (-l) on test programs"
+	@echo "  clean      - Remove build artifacts"
+	@echo "  help       - Show this menu"

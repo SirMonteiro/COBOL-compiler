@@ -14,11 +14,14 @@ Repositório público: https://github.com/SirMonteiro/COBOL-compiler
 
 ```sh
 make            # compila o binário ./cbc (Flex + Bison + GCC)
-./cbc programa.cbl              # executa análise léxica e sintática
+./cbc programa.cbl              # executa análise léxica, sintática e semântica
 ./cbc -l programa.cbl           # executa apenas o lexer e imprime o fluxo de tokens
+./cbc -p programa.cbl           # executa lexer + parser (sem análise semântica)
 ./cbc -a programa.cbl           # imprime a AST gerada pelo parser
+./cbc -s programa.cbl           # imprime a tabela de símbolos da análise semântica
 ./cbc -I dir/ programa.cbl      # adiciona diretório extra de busca para COPY
-make test       # executa lex + parse em cobol-exemplos/*.cob e exemplos/*.cbl
+make test       # executa lex + parse + semântica em cobol-exemplos/*.cob e exemplos/*.cbl
+make test-parse # executa apenas lex + parse (-p) nos 14 programas de teste
 make test-lex   # executa apenas o lexer (-l) nos 14 programas de teste
 ```
 
@@ -2458,5 +2461,228 @@ Saída em `stderr` (exit `1`):
 
 ```text
 [E] Syntax Error (exemplos/BUSCA01A.cbl, Seq 000020, Col 8): syntax error, unexpected KW_DATA, expecting KW_STATUS (near "DATA")
+```
+
+
+## 4. Parte 3: Análise Semântica e Tabela de Símbolos
+
+### 4.1 Implementação do analisador semântico
+
+A análise semântica implementa as quatro verificações da Seção 4 de [EspecificacaoCOBOL.md](EspecificacaoCOBOL.md) em [include/sema.h](include/sema.h) e [src/sema.c](src/sema.c), operando em duas passagens sobre a AST produzida pelo parser:
+
+1. Primeira passagem (coleta de declarações): percorre `ENVIRONMENT DIVISION` (`SELECT`), `DATA DIVISION` (`FD`/`SD`, itens de dados `01` a `49`, `77`, `88` e índices de `OCCURS ... INDEXED BY`) e `PROCEDURE DIVISION` (seções e parágrafos). Uma pilha de níveis associa cada item subordinado ao seu grupo pai (`parent_idx`) e ao descritor `FD` de origem (`fd_idx`). Cada cláusula `PIC` é classificada em `PIC_A`, `PIC_9`, `PIC_9_ED` (numérico editado) ou `PIC_X`, e itens sem `PIC` recebem categoria `GROUP` (ou `COND_88` para nível `88`). Declarações duplicadas com o mesmo nome dentro do mesmo escopo pai (ignorando `FILLER`), `SELECT`/`FD` repetidos e nomes duplicados de seção ou parágrafo geram `[E] Semantic Error`.
+2. Segunda passagem (validação de uso): verifica o pareamento `SELECT`/`FD` e percorre as instruções da `PROCEDURE DIVISION` aplicando as regras da especificação:
+   - Compatibilidade de `MOVE` (Regra 1): impede (`[E]`) movimentações de dados puramente alfabéticos (`PIC A`) ou literais alfanuméricos não numéricos para variáveis numéricas (`PIC 9` ou numéricas editadas). Conversões permissivas do COBOL, como `PIC X` para `PIC 9` ou numérico para `PIC A`, emitem aviso `[W]` sem abortar a compilação. Itens com modificação de referência (`VAR(pos:len)`) são tratados como alfanuméricos.
+   - Unicidade e qualificação de identificadores (Regra 2): resolve referências simples e qualificadas (`A OF B`), reportando identificadores não declarados (aceitando registradores especiais padrão como `RETURN-CODE` e `TALLY`) e referências ambíguas quando o mesmo nome existe em grupos diferentes sem qualificação `OF`/`IN`. Isso aceita estruturas hierárquicas reais como `01 TAB-ENT-LINHA` contendo `05 TAB-ENT-LINHA OCCURS 10 TIMES` em `CAD0005A.cbl` e `PROG024A.cbl`.
+   - Destinos de controle (Regra 3): confirma que todo alvo de `PERFORM`, `PERFORM ... THRU`, `GO TO` e `ALTER` corresponde a uma seção ou parágrafo declarado na `PROCEDURE DIVISION`.
+   - Associação de arquivos (Regra 4): exige que todo arquivo usado em `OPEN`, `READ`, `DELETE`, `START`, `CLOSE` ou `SORT` possua tanto `SELECT` em `FILE-CONTROL` quanto `FD`/`SD` na `DATA DIVISION`, e que todo registro usado em `WRITE` ou `REWRITE` pertença a um `FD` com `SELECT` correspondente.
+
+A flag `-s`/`--symtab` imprime a tabela de símbolos (`FILES`, `DATA ITEMS` e `PROCEDURES`), enquanto `-p`/`--parse` permite parar após a análise sintática. O parser ([src/parser.y](src/parser.y)) também passou a preservar na AST as cláusulas `INDEXED BY`, `THRU`, `GIVING`, `REMAINDER`, `INTO`, `FROM`, `CALL USING` e manipuladores `NOT AT END`/`NOT INVALID KEY`/`NOT ON SIZE ERROR` para que todas as referências sejam verificadas.
+
+### 4.2 Resultados dos testes semânticos
+
+Os 14 programas de `cobol-exemplos/` e `exemplos/` passam na análise completa (`make test`) com zero erros e zero avisos.
+
+| Programa | Arquivos | Itens de dados | Procedimentos | Exit |
+| --------------------------------------- | -------: | -------------: | ------------: | ---: |
+| `cobol-exemplos/prog001_divisoes.cob` | 0 | 0 | 1 | 0 |
+| `cobol-exemplos/prog002_operacoes.cob` | 0 | 7 | 1 | 0 |
+| `cobol-exemplos/prog003_calculadora.cob` | 0 | 7 | 4 | 0 |
+| `cobol-exemplos/prog004_folha_pgto.cob` | 0 | 7 | 4 | 0 |
+| `cobol-exemplos/prog005_strings.cob` | 0 | 4 | 1 | 0 |
+| `cobol-exemplos/prog006_files.cob` | 1 | 16 | 2 | 0 |
+| `cobol-exemplos/prog007_loja.cob` | 2 | 22 | 6 | 0 |
+| `exemplos/BUSCA01A.cbl` | 1 | 9 | 8 | 0 |
+| `exemplos/CAD0002A.cbl` | 0 | 47 | 18 | 0 |
+| `exemplos/CAD0004A.cbl` | 1 | 8 | 4 | 0 |
+| `exemplos/CAD0005A.cbl` | 1 | 15 | 18 | 0 |
+| `exemplos/CAIXAREG.cbl` | 0 | 10 | 20 | 0 |
+| `exemplos/CALCMD01.cbl` | 0 | 8 | 12 | 0 |
+| `exemplos/PROG024A.cbl` | 2 | 65 | 36 | 0 |
+
+Sobre os 71 programas COBOL válidos do submódulo [codigo_fonte_cobol/](codigo_fonte_cobol/) que passam pelo parser, 70 passaram sem erros na análise semântica e 1 (`ASCII001.cbl`) foi corretamente rejeitado por usar a variável `WS-CODIGO` na linha 10 sem declará-la na `WORKING-STORAGE SECTION`.
+
+<details>
+<summary>Tabela de símbolos gerada para exemplos/BUSCA01A.cbl (./cbc -s)</summary>
+
+```text
+$ ./cbc -s exemplos/BUSCA01A.cbl
+=== FILES (1) ===
+  ARQUIVO-ENTRADA          SELECT=yes  FD=yes
+=== DATA ITEMS (9) ===
+  01 REGISTRO-ENTRADA             GROUP    PIC=-                PARENT=-                    @23:27
+  05 NOME                         PIC_X    PIC=X(30)            PARENT=REGISTRO-ENTRADA     @24:62
+  05 IDADE                        PIC_9    PIC=9(02)            PARENT=REGISTRO-ENTRADA     @25:61
+  05 CPF                          PIC_9    PIC=9(11)            PARENT=REGISTRO-ENTRADA     @26:61
+  01 WRK-FIM-ARQUIVO              PIC_X    PIC=X(01)            PARENT=-                    @29:59
+  01 WRK-CPF-PROCURADO            PIC_9    PIC=9(11)            PARENT=-                    @30:61
+  01 WRK-CPF-LISTADO              PIC_9    PIC=9(11)            PARENT=-                    @31:61
+  01 WRK-CPF-ENCONTRADO           PIC_X    PIC=X(01)            PARENT=-                    @32:59
+  01 WRK-IND1                     PIC_9    PIC=9(02)            PARENT=-                    @33:61
+=== PROCEDURES (8) ===
+  0000-PROCESSAR               SECTION   @43:8
+  0000-END                     PARAGRAPH @61:8
+  0001-LER-ARQUIVO             SECTION   @67:8
+  0001-END                     PARAGRAPH @81:8
+  0002-BUSCAR-CPF              SECTION   @88:8
+  0002-END                     PARAGRAPH @100:8
+  9999-FINALIZAR               SECTION   @106:8
+  9999-END                     PARAGRAPH @114:8
+```
+
+</details>
+
+### 4.3 Resultados de erros e avisos semânticos
+
+Abaixo estão dez testes cobrindo as quatro regras semânticas da Seção 4 (além de variáveis não declaradas e avisos `[W]`):
+
+#### 1. `MOVE` incompatível de `PIC A` para `PIC 9` (`cobol-exemplos/prog003_calculadora.cob`)
+
+Movimentação de `WKS-OPCAO` (`PIC A(01)`) para `WKS-SAIR` (`PIC 9(1)`), violando a Regra 1 da Seção 4.
+
+```cobol
+           MOVE WKS-OPCAO TO WKS-SAIR.
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Semantic Error (cobol-exemplos/prog003_calculadora.cob, Seq 000029, Col 30): Incompatible MOVE from alphabetic (PIC A) "WKS-OPCAO" to numeric "WKS-SAIR" (9(1)).
+```
+
+#### 2. `MOVE` de literal não numérico para `PIC 9` (`exemplos/BUSCA01A.cbl`)
+
+Atribuição da string `'ABC'` à variável numérica `WRK-IND1` (`PIC 9(02)`).
+
+```cobol
+                 MOVE 'ABC'       TO WRK-IND1
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Semantic Error (exemplos/BUSCA01A.cbl, Seq 000076, Col 38): Incompatible MOVE from non-numeric literal 'ABC' to numeric "WRK-IND1" (9(02)).
+```
+
+#### 3. Aviso `[W]` em `MOVE` de `PIC X` para `PIC 9` (`exemplos/BUSCA01A.cbl`)
+
+Movimentação de `WRK-FIM-ARQUIVO` (`PIC X(01)`) para `WRK-IND1` (`PIC 9(02)`). Gera aviso sem interromper a compilação.
+
+```cobol
+                 MOVE WRK-FIM-ARQUIVO TO WRK-IND1
+```
+
+Saída em `stderr` (exit `0`):
+
+```text
+[W] Semantic Warning (exemplos/BUSCA01A.cbl, Seq 000076, Col 42): Moving alphanumeric "WRK-FIM-ARQUIVO" to numeric "WRK-IND1" (9(02)).
+```
+
+#### 4. Identificador duplicado no mesmo escopo (`exemplos/BUSCA01A.cbl`)
+
+Segunda declaração de `01 WRK-IND1` na `WORKING-STORAGE SECTION` (Regra 2).
+
+```cobol
+       01 WRK-IND1                     PIC 9(02) VALUE ZEROS.
+       01 WRK-IND1                     PIC 9(02) VALUE ZEROS.
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Semantic Error (exemplos/BUSCA01A.cbl, Seq 000034, Col 61): Duplicate identifier "WRK-IND1" in the same scope (previous at Seq 000033).
+[E] Semantic Error (exemplos/BUSCA01A.cbl, Seq 000077, Col 38): Ambiguous identifier "WRK-IND1" (2 declarations); qualify with OF/IN.
+[E] Semantic Error (exemplos/BUSCA01A.cbl, Seq 000110, Col 54): Ambiguous identifier "WRK-IND1" (2 declarations); qualify with OF/IN.
+```
+
+#### 5. Referência ambígua sem qualificação `OF` (`exemplos/CAD0004A.cbl`)
+
+Declaração de `05 NOME` em dois grupos distintos (`REGISTRO-CADASTRO` e `OUTRO-REG`) seguida de `MOVE WRK-NOME TO NOME` sem `OF`. Ao qualificar como `NOME OF REGISTRO-CADASTRO`, o programa passa sem erros.
+
+```cobol
+       01  OUTRO-REG.
+         05 NOME     PIC X(30).
+       ...
+           MOVE WRK-NOME  TO NOME
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Semantic Error (exemplos/CAD0004A.cbl, Seq 000056, Col 30): Ambiguous identifier "NOME" (2 declarations); qualify with OF/IN.
+```
+
+#### 6. Alvo inexistente em `PERFORM` (`exemplos/BUSCA01A.cbl`)
+
+Chamada a um parágrafo/seção não declarado (`9999-INEXISTENTE`), violando a Regra 3.
+
+```cobol
+           PERFORM 9999-INEXISTENTE
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Semantic Error (exemplos/BUSCA01A.cbl, Seq 000058, Col 12): Undeclared PERFORM target "9999-INEXISTENTE".
+```
+
+#### 7. Alvo inexistente em `GO TO` (`exemplos/CAD0002A.cbl`)
+
+Desvio `GO TO 9999-INEXISTENTE` para rótulo não declarado na `PROCEDURE DIVISION`.
+
+```cobol
+                   GO TO 9999-INEXISTENTE
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Semantic Error (exemplos/CAD0002A.cbl, Seq 000265, Col 26): Undeclared GO TO target "9999-INEXISTENTE".
+```
+
+#### 8. Arquivo usado sem `SELECT` na `FILE-CONTROL` (`exemplos/BUSCA01A.cbl`)
+
+Remoção do `SELECT ARQUIVO-ENTRADA` mantendo o `FD` e os comandos `OPEN`/`READ`/`CLOSE` (Regra 4).
+
+```cobol
+       FILE-CONTROL.
+      * SELECT ARQUIVO-ENTRADA removido
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Semantic Error (exemplos/BUSCA01A.cbl, Seq 000026, Col 8): FD "ARQUIVO-ENTRADA" has no matching SELECT in FILE-CONTROL.
+[E] Semantic Error (exemplos/BUSCA01A.cbl, Seq 000044, Col 23): File "ARQUIVO-ENTRADA" used in OPEN has no SELECT declaration in FILE-CONTROL.
+[E] Semantic Error (exemplos/BUSCA01A.cbl, Seq 000053, Col 18): File "ARQUIVO-ENTRADA" used in CLOSE has no SELECT declaration in FILE-CONTROL.
+[E] Semantic Error (exemplos/BUSCA01A.cbl, Seq 000068, Col 17): File "ARQUIVO-ENTRADA" used in READ has no SELECT declaration in FILE-CONTROL.
+```
+
+#### 9. `WRITE` em variável que não pertence a um `FD` (`exemplos/CAD0004A.cbl`)
+
+Uso de `WRITE WRK-NOME`, onde `WRK-NOME` está na `WORKING-STORAGE` e não sob um descritor `FD` (Regra 4).
+
+```cobol
+           WRITE WRK-NOME
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Semantic Error (exemplos/CAD0004A.cbl, Seq 000058, Col 18): Record "WRK-NOME" used in WRITE is not declared under an FD in FILE SECTION.
+```
+
+#### 10. Identificador não declarado (`exemplos/CALCMD01.cbl`)
+
+Leitura via `ACCEPT WRK-NAO-DECL` de uma variável ausente na `DATA DIVISION`.
+
+```cobol
+              ACCEPT WRK-NAO-DECL
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Semantic Error (exemplos/CALCMD01.cbl, Seq 000125, Col 22): Undeclared identifier "WRK-NAO-DECL".
 ```
 
