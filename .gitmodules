@@ -1,3 +1,6 @@
 [submodule "cobol-exemplos"]
 	path = cobol-exemplos
 	url = https://github.com/ebasso/cobol-exemplo
+[submodule "codigo_fonte_cobol"]
+	path = codigo_fonte_cobol
+	url = https://github.com/Coboldicas/codigo_fonte_cobol
