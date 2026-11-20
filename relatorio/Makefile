@@ -6,7 +6,7 @@ MAX_CODE_COLS := 92
 pdf:
 	awk -v max=$(MAX_CODE_COLS) ' \
 		/^<details>/ || /^<\/details>/ { next } \
-		/^<summary>.*<\/summary>/ { sub(/^<summary>/, "### "); sub(/<\/summary>$$/, ""); print; next } \
+		/^<summary>.*<\/summary>/ { sub(/^<summary>/, "#### "); sub(/<\/summary>$$/, ""); print; next } \
 		/^```/ { in_code = !in_code; print; next } \
 		in_code && length($$0) > max { \
 			s = $$0; \

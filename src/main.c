@@ -6,10 +6,14 @@
 
 #include "read.h"
 #include "lexer.h"
+#include "parser.h"
+#include "ast.h"
 
 #ifndef GIT_VERSION
 #define GIT_VERSION "unknown"
 #endif
+
+#define MAX_COPY_DIRS 32
 
 void print_help(const char *prog_name) {
     printf("Usage: %s [options] file...\n", prog_name);
@@ -20,6 +24,9 @@ void print_help(const char *prog_name) {
     printf("  -o <file>, --output   Place the output into <file>.\n");
     printf("  -d, --debug           Add debugging lines in compilation.\n");
     printf("  -c, --comment         Display comments.\n");
+    printf("  -l, --lex             Run lexical analysis only and print tokens.\n");
+    printf("  -a, --ast             Print the abstract syntax tree after parsing.\n");
+    printf("  -I <dir>, --include   Add copybook search directory for COPY.\n");
 }
 
 int main(int argc, char **argv) {
@@ -31,6 +38,10 @@ int main(int argc, char **argv) {
     int opt;
     OPTS opts = {false, false};
     const char *output_file = NULL;
+    bool lex_only = false;
+    bool dump_ast = false;
+    const char *copy_dirs[MAX_COPY_DIRS];
+    int n_copy_dirs = 0;
 
     static struct option long_options[] = {
         {"help",    no_argument,        0, 'h'},
@@ -38,10 +49,13 @@ int main(int argc, char **argv) {
         {"output",  required_argument,  0, 'o'},
         {"debug",   no_argument,        0, 'd'},
         {"comment", no_argument,        0, 'c'},
+        {"lex",     no_argument,        0, 'l'},
+        {"ast",     no_argument,        0, 'a'},
+        {"include", required_argument,  0, 'I'},
         {0,         0,                  0,  0}
     };
 
-    while ((opt = getopt_long(argc, argv, "hvo:dc", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hvo:dclaI:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_help(argv[0]);
@@ -57,6 +71,17 @@ int main(int argc, char **argv) {
                 break;
             case 'c':
                 opts.display_comments = true;
+                break;
+            case 'l':
+                lex_only = true;
+                break;
+            case 'a':
+                dump_ast = true;
+                break;
+            case 'I':
+                if (n_copy_dirs < MAX_COPY_DIRS) {
+                    copy_dirs[n_copy_dirs++] = optarg;
+                }
                 break;
             default:
                 print_help(argv[0]);
@@ -83,65 +108,44 @@ int main(int argc, char **argv) {
 
     for (int fi = optind; fi < argc; fi++) {
         const char *input_path = argv[fi];
-        FILE *cobolSrc = fopen(input_path, "r");
-        if (!cobolSrc) {
-            fprintf(stderr, "[S] ERROR: Failed to open input file \"%s\".\n", input_path);
+        if (nfiles > 1 && (lex_only || dump_ast)) {
+            fprintf(out, "### %s\n", input_path);
+        }
+
+        TokenList tokens;
+        token_list_init(&tokens);
+        lexer_reset_errors();
+
+        bool lex_ok = lex_cobol_file(
+            input_path,
+            &opts,
+            lex_only ? out : NULL,
+            &tokens,
+            copy_dirs,
+            n_copy_dirs,
+            !lex_only /* expand COPY when parsing; keep raw token stream in -l mode */
+        );
+
+        if (!lex_ok || lexer_error_count() > 0) {
             status = EXIT_FAILURE;
+            token_list_free(&tokens);
             continue;
         }
 
-        if (nfiles > 1) fprintf(out, "### %s\n", input_path);
-        lexer_begin_file();
-
-        char raw_buffer[256];
-        int line_no = 0;
-
-        while (fgets(raw_buffer, sizeof(raw_buffer), cobolSrc) != NULL) {
-            line_no++;
-
-            /* Discard rest of lines exceeding buffer (cols > 72 are ignored anyway) */
-            size_t n = strlen(raw_buffer);
-            if (n > 0 && raw_buffer[n - 1] != '\n' && !feof(cobolSrc)) {
-                int c;
-                while ((c = fgetc(cobolSrc)) != '\n' && c != EOF) { }
-            }
-
-            COBOL_LINE parsed_line;
-            if (!read_cobol_line(&opts, raw_buffer, &parsed_line)) {
-                if (parsed_line.seq_num == 0) parsed_line.seq_num = line_no;
-                fflush(out);
-                fprintf(stderr,
-                        "[S] Indicator Error (%s, Seq %06d): Invalid indicator '%c' in Column 7.\n",
-                        input_path, parsed_line.seq_num, parsed_line.indicator);
+        if (!lex_only) {
+            int parse_errors = 0;
+            ASTNode *root = parse_tokens(&tokens, input_path, &parse_errors);
+            if (!root || parse_errors > 0) {
                 status = EXIT_FAILURE;
-                continue;
+            } else if (dump_ast) {
+                ast_print(root, out, 0);
             }
-
-            if (parsed_line.seq_num == 0) parsed_line.seq_num = line_no;
-
-            switch (parsed_line.status) {
-                case LINE_STATUS_CONTINUATION:
-                case LINE_STATUS_CODE:
-                    lexer_process_line(&parsed_line, out);
-                    break;
-                case LINE_STATUS_COMMENT:
-                    if (opts.display_comments) {
-                        fprintf(out, "[I] Comment (Seq %06d): %s\n",
-                                parsed_line.seq_num, parsed_line.comment);
-                    }
-                    break;
-                case LINE_STATUS_EMPTY:
-                case LINE_STATUS_DEBUG_SKIPPED:
-                default:
-                    break;
-            }
+            ast_free(root);
         }
 
-        lexer_end_file(out);
-        fclose(cobolSrc);
+        token_list_free(&tokens);
     }
 
     if (out != stdout) fclose(out);
-    if (lexer_error_count() > 0) status = EXIT_FAILURE;
     return status;
 }

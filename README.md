@@ -1,6 +1,6 @@
 # Compilador COBOL (`cbc`) - ACH2087
 
-Projeto desenvolvido para a disciplina [ACH2087 - Construção de Compiladores](https://uspdigital.usp.br/jupiterweb/obterDisciplina?sgldis=ACH2087&codcur=86200&codhab=204) (EACH-USP, 2º semestre de 2026), seguindo a especificação definida em [EspecificacaoCOBOL.md](EspecificacaoCOBOL.md).
+Compilador COBOL em desenvolvimento para a disciplina [ACH2087 - Construção de Compiladores](https://uspdigital.usp.br/jupiterweb/obterDisciplina?sgldis=ACH2087&codcur=86200&codhab=204) (EACH-USP, 2º semestre de 2026), seguindo [EspecificacaoCOBOL.md](EspecificacaoCOBOL.md).
 
 Grupo:
 
@@ -10,74 +10,72 @@ Grupo:
 
 Repositório público: https://github.com/SirMonteiro/COBOL-compiler
 
-## 2.1 Introdução
-
-O COBOL (*Common Business-Oriented Language*) surgiu em 1959 a partir do comitê CODASYL, apoiado pelo Departamento de Defesa dos Estados Unidos, com o objetivo de criar uma linguagem voltada ao processamento comercial que pudesse ser lida quase como texto em inglês ([GnuCOBOL FAQ](https://gnucobol.sourceforge.io/faq/index.html#history)). Apesar da idade, a linguagem continua em produção em sistemas bancários, folhas de pagamento, seguradoras e órgãos públicos, principalmente pelo volume de código legado já validado e pelo custo e risco de reescrever regras de negócio que operam em lote há décadas.
-
-Construir um analisador léxico para COBOL em formato fixo traz alguns problemas práticos que não aparecem em linguagens de formato livre:
-
-1. Cada linha física divide-se em Área de Sequência (colunas 1 a 6), Área de Indicador (coluna 7, com espaço em branco, `*` ou `/` para comentário, `-` para continuação e `D` para depuração), Área A (colunas 8 a 11), Área B (colunas 12 a 72) e Área do Programa (colunas 73 a 80, ignorada pelo compilador). Arquivos editados com tabulações (`\t`) exigem expansão prévia para múltiplos de 8 colunas para que a fronteira entre Área A e Área B não se desloque.
-2. A posição inicial do token define se um elemento pertence à Área A (cabeçalhos de divisão, seções, parágrafos e níveis `01` e `77`) ou à Área B (comandos, cláusulas e níveis subordinados). Por isso o lexer precisa registrar a coluna e a área em cada token emitido.
-3. Literais alfanuméricos abertos e identificadores longos podem terminar na coluna 72 e continuar na linha seguinte marcada com `-` na coluna 7, como acontece com `TAB-TRABALHADOR` nos programas de teste e com strings maiores que uma linha.
-4. O ponto final `.` encerra sentenças e parágrafos, mas também aparece dentro de literais numéricos (`-123.45`) e de especificações de formato (`PIC ZZ9.99.`). Máscaras como `PIC -ZZZZZZZZZ9` começam com `-` e seriam confundidas com identificadores inválidos se lidas fora do contexto de `PIC` ou `PICTURE`.
-5. A linguagem reúne centenas de palavras reservadas insensíveis a maiúsculas e minúsculas e aceita hífens internos em identificadores de até 30 caracteres (`WRK-VALOR1`), proibindo hífen no início ou no fim.
-
-## 2.2 Implementação
-
-O analisador léxico (`cbc`) foi implementado em C com suporte do gerador léxico `flex`, compilado com `gcc` (`-O3 -Wall -Wformat`). Toda a leitura respeita o formato fixo especificado na Seção 2 de [EspecificacaoCOBOL.md](EspecificacaoCOBOL.md).
-
-A base de código está organizada em quatro módulos principais:
-
-- [include/read.h](include/read.h) e [src/read.c](src/read.c): implementam `read_cobol_line`, que expande tabulações (`expand_tabs` com largura 8), extrai a área de sequência (`parse_seq`), valida o indicador da coluna 7 (espaço, `*`, `/`, `-`, `D`/`d`), separa comentários quando `-c` está ativo, descarta linhas de depuração sem `-d` e recorta exatamente as colunas 8-72 (`code_slice`). Indicadores inválidos retornam erro severo `[S]`.
-- [src/lexer.l](src/lexer.l): define as regras do Flex com `%option caseless`, comentários inline `*>`, palavras reservadas agrupadas (`KW_DIVISIONS`, `KW_VERBS`, `KW_ENDS`, `KW_CLAUSES`, `KW_MISC`, `KW_FIGURATIVE`), literais numéricos com sinal e ponto decimal interno, strings entre aspas simples ou duplas (aceitando aspas dobradas como escape), operadores aritméticos e relacionais (`+`, `-`, `*`, `/`, `**`, `=`, `<>`, `<`, `<=`, `>`, `>=`) e pontuação (`.`, `,`, `;`, `(`, `)`, `:`). Para cláusulas `PIC`/`PICTURE [IS]`, o scanner entra no estado exclusivo `%x PICSTR`, captura a máscara como um único `TOKEN_PICTURE` e devolve eventual `.` final ao fluxo via `yyless` quando ele encerra a sentença. Identificadores aceitam `A-Z`, `0-9`, `_` (compatibilidade com `PROGRAM-ID` encontrado nos exemplos) e `-` interno, validando o limite de 30 caracteres e rejeitando hífen inicial ou final.
-- [include/lexer.h](include/lexer.h) e [src/lexer_support.c](src/lexer_support.c): implementam `emit_token` (normalizando palavras-chave e identificadores para maiúsculas e registrando sequência, coluna e área), `emit_lexical_error` (reportando erro `[E]` em `stderr` e emitindo `TOKEN_UNKNOWN` para não interromper a varredura) e um mecanismo de lookahead de uma linha (`lexer_begin_file`, `lexer_process_line`, `lexer_end_file`) que trata linhas de continuação `-` tanto para literais alfanuméricos abertos na coluna 72 quanto para identificadores divididos entre a coluna 72 e a linha seguinte.
-- [src/main.c](src/main.c): processa argumentos via `getopt_long` (`-h`, `-v`, `-o`, `-d`, `-c`), aceita múltiplos arquivos de entrada, usa o número da linha física quando as colunas 1-6 estão em branco, descarta sobras de linhas maiores que o buffer de leitura e retorna código de saída diferente de zero quando ocorrem erros léxicos ou de indicador.
-
-### Uso de ferramentas de IA
-
-Durante o desenvolvimento desta primeira entrega, o grupo usou modelos de linguagem (Claude e Gemini via Antigravity) como apoio nas seguintes atividades:
-
-- Revisão das regras léxicas em [src/lexer.l](src/lexer.l), incluindo o agrupamento de palavras reservadas além do subconjunto mínimo da especificação e o tratamento da condição inicial `PICSTR`.
-- Verificação de casos de borda do formato fixo (expansão de tabulações, continuação na coluna 72 e comportamento diante de literais não fechados).
-- Organização, verificação dos exemplos de saída e revisão textual deste relatório.
-
-O desenho modular do leitor de colunas, a interface de linha de comando e a estrutura geral do compilador em C foram escritos manualmente pela equipe.
-
-### Compilação e execução
+## Compilação e uso
 
 ```sh
-make          # compila o binário ./cbc
-./cbc cobol-exemplos/prog001_divisoes.cob
-make test     # executa ./cbc em cobol-exemplos/*.cob e exemplos/*.cbl
+make            # compila o binário ./cbc (Flex + Bison + GCC)
+./cbc programa.cbl              # executa análise léxica e sintática
+./cbc -l programa.cbl           # executa apenas o lexer e imprime o fluxo de tokens
+./cbc -a programa.cbl           # imprime a AST gerada pelo parser
+./cbc -I dir/ programa.cbl      # adiciona diretório extra de busca para COPY
+make test       # executa lex + parse em cobol-exemplos/*.cob e exemplos/*.cbl
+make test-lex   # executa apenas o lexer (-l) nos 14 programas de teste
 ```
 
-Para gerar a versão em PDF do relatório a partir deste `README.md`:
+Para gerar a versão em PDF deste relatório na raiz do repositório:
 
 ```sh
 make -C relatorio pdf
 ```
 
-## 2.3 Resultados dos testes
+## 1. Introdução
 
-O analisador léxico foi executado sobre os sete programas de teste do diretório [cobol-exemplos/](cobol-exemplos/). Os sete programas adicionais em [exemplos/](exemplos/) também passam com código de saída `0` em `make test`.
+O COBOL (*Common Business-Oriented Language*) surgiu em 1959 a partir do comitê CODASYL, apoiado pelo Departamento de Defesa dos Estados Unidos, para processamento comercial com leitura próxima ao inglês ([GnuCOBOL FAQ](https://gnucobol.sourceforge.io/faq/index.html#history)). A linguagem continua em produção em bancos, folhas de pagamento, seguradoras e órgãos públicos pelo volume de código legado já validado e pelo custo e risco de reescrever rotinas em lote que operam há décadas.
+
+Compilar COBOL em formato fixo traz problemas práticos que não aparecem em linguagens de formato livre:
+
+1. Cada linha física divide-se em Área de Sequência (colunas 1 a 6), Área de Indicador (coluna 7, com espaço em branco, `*` ou `/` para comentário, `-` para continuação e `D` para depuração), Área A (colunas 8 a 11), Área B (colunas 12 a 72) e Área do Programa (colunas 73 a 80, ignorada pelo compilador). Arquivos editados com tabulações (`\t`) exigem expansão prévia para múltiplos de 8 colunas para que a fronteira entre Área A e Área B não se desloque.
+2. A posição inicial do token define se um elemento pertence à Área A (cabeçalhos de divisão, seções, parágrafos e níveis `01` e `77`) ou à Área B (comandos, cláusulas e níveis subordinados). Por isso o lexer registra a coluna e a área em cada token emitido.
+3. Literais alfanuméricos abertos e identificadores longos podem terminar na coluna 72 e continuar na linha seguinte marcada com `-` na coluna 7, como acontece com `TAB-TRABALHADOR` nos programas de teste e com strings maiores que uma linha.
+4. O ponto final `.` encerra sentenças e parágrafos, mas também aparece em literais numéricos (`-123.45`) e em máscaras de formato (`PIC ZZ9.99.`, `PIC ZZZ.ZZZ.ZZZ,ZZ.`). Máscaras como `PIC -ZZZZZZZZZ9.99` começam com `-` e seriam confundidas com identificadores inválidos se lidas fora do contexto de `PIC` ou `PICTURE`.
+5. A linguagem reúne centenas de palavras reservadas insensíveis a maiúsculas e minúsculas, aceita hífens internos em identificadores de até 30 caracteres (`WRK-VALOR1`), permite delimitadores de bloco opcionais (como `IF` sem `END-IF`, fechado por `END-PERFORM` ou `.`) e aceita condições relacionais abreviadas (`IF WKS-OPCAO = "S" OR "U"`).
+
+## 2. Parte 1: Análise Léxica
+
+### 2.1 Implementação do lexer
+
+O analisador léxico foi escrito em C com o gerador `flex`, compilado com `gcc` (`-O3 -Wall -Wformat`), seguindo a Seção 2 de [EspecificacaoCOBOL.md](EspecificacaoCOBOL.md).
+
+Os arquivos responsáveis por essa etapa são:
+
+- [include/read.h](include/read.h) e [src/read.c](src/read.c): implementam `read_cobol_line`, que expande tabulações (`expand_tabs` com largura 8), extrai a área de sequência (`parse_seq`), valida o indicador da coluna 7 (espaço, `*`, `/`, `-`, `D`/`d`), separa comentários quando `-c` está ativo, descarta linhas de depuração sem `-d` e recorta exatamente as colunas 8 a 72 (`code_slice`). Indicadores inválidos geram erro severo `[S]`.
+- [src/lexer.l](src/lexer.l): define as regras do Flex com `%option caseless`, comentários inline `*>`, palavras reservadas agrupadas (`KW_DIVISIONS`, `KW_VERBS`, `KW_ENDS`, `KW_CLAUSES`, `KW_MISC`, `KW_FIGURATIVE`), literais numéricos com sinal e separador decimal interno (`.` ou `,` para `DECIMAL-POINT IS COMMA`), strings entre aspas simples ou duplas (com aspas dobradas como escape), operadores aritméticos e relacionais (`+`, `-`, `*`, `/`, `**`, `=`, `<>`, `<`, `<=`, `>`, `>=`) e pontuação (`.`, `,`, `;`, `(`, `)`, `:`). Após `PIC`/`PICTURE [IS]`, o scanner entra no estado exclusivo `%x PICSTR`, captura a máscara como `TOKEN_PICTURE` e devolve eventual `.` final ao fluxo via `yyless`. Identificadores aceitam `A-Z`, `0-9`, `_` (usado em `PROGRAM-ID` nos exemplos) e `-` interno, com limite de 30 caracteres e rejeição de hífen inicial ou final.
+- [include/lexer.h](include/lexer.h) e [src/lexer_support.c](src/lexer_support.c): implementam `emit_token` (normalizando palavras-chave e identificadores para maiúsculas, gravando os tokens em `TokenList` e imprimindo o fluxo quando `-l` está ativo), `emit_lexical_error` (reportando erro `[E]` em `stderr` e emitindo `TOKEN_UNKNOWN` sem interromper a varredura), o lookahead de uma linha (`lexer_begin_file`, `lexer_process_line`, `lexer_end_file`) para continuações `-` de strings e identificadores na coluna 72, e `lex_cobol_file` com expansão recursiva de copybooks `COPY`.
+- [src/main.c](src/main.c): processa argumentos via `getopt_long` (`-h`, `-v`, `-o`, `-d`, `-c`, `-l`, `-a`, `-I`), aceita múltiplos arquivos, usa o número da linha física quando as colunas 1 a 6 estão em branco, descarta sobras de linhas acima do buffer e retorna código de saída diferente de zero quando ocorrem erros.
+
+Uso de ferramentas de IA na Parte 1: o grupo usou modelos de linguagem (Claude e Gemini via Antigravity) na revisão das regras léxicas de [src/lexer.l](src/lexer.l) (palavras reservadas estendidas e estado `PICSTR`), na checagem de casos de borda do formato fixo (tabulações, continuação na coluna 72 e literais não fechados) e na revisão textual deste relatório. O leitor de colunas, a CLI e a estrutura principal em C foram escritos manualmente.
+
+### 2.2 Resultados dos testes léxicos
+
+O lexer (`./cbc -l`) foi executado nos sete programas de [cobol-exemplos/](cobol-exemplos/), além dos sete programas de [exemplos/](exemplos/), todos com código de saída `0` via `make test-lex`.
 
 | Programa | Descrição | Tokens emitidos | Exit |
 | ---------------------------- | ---------------------------------------------- | ---------------: | ---: |
 | `prog001_divisoes.cob` | Divisões básicas, seções e `DISPLAY` simples | 76 | 0 |
 | `prog002_operacoes.cob` | Operações aritméticas (`ADD`, `SUBTRACT`, `MULTIPLY`, `DIVIDE`, `MOVE`) | 320 | 0 |
-| `prog003_calculadora.cob` | Calculadora interativa com `ACCEPT`, `IF`/`ELSE`, `COMPUTE` e máscara `PIC -ZZZZZZZZZ9` | 229 | 0 |
-| `prog004_folha_pgto.cob` | Tabela (`OCCURS`), `PERFORM ... UNTIL` e continuação de identificador quebrado na coluna 72 | 221 | 0 |
+| `prog003_calculadora.cob` | Calculadora interativa com `ACCEPT`, `IF`/`ELSE`, `COMPUTE` e `PIC -ZZZZZZZZZ9.99` | 229 | 0 |
+| `prog004_folha_pgto.cob` | Tabela (`OCCURS`), `PERFORM ... UNTIL` e continuação de identificador na coluna 72 | 221 | 0 |
 | `prog005_strings.cob` | Manipulação de cadeias com `INSPECT`, `STRING` e `UNSTRING` | 236 | 0 |
 | `prog006_files.cob` | Manipulação de arquivos sequenciais (`SELECT`, `FD`, `OPEN`, `WRITE`, `CLOSE`) | 225 | 0 |
 | `prog007_loja.cob` | Cadastro de produtos com `EVALUATE`, leitura/escrita indexada e `INVALID KEY` | 566 | 0 |
 
-Os fluxos completos de tokens gerados por `./cbc` para cada programa de `cobol-exemplos/` estão listados abaixo.
+Os fluxos completos de tokens gerados por `./cbc -l` para cada programa de `cobol-exemplos/` estão abaixo.
 
 <details>
 <summary>prog001_divisoes.cob (76 tokens, exit 0)</summary>
 
 ```text
-$ ./cbc cobol-exemplos/prog001_divisoes.cob
+$ ./cbc -l cobol-exemplos/prog001_divisoes.cob
 [SEQ 000015 | COL 08 (AREA A)] TOKEN_KEYWORD              : IDENTIFICATION
 [SEQ 000015 | COL 23 (AREA B)] TOKEN_KEYWORD              : DIVISION
 [SEQ 000015 | COL 31 (AREA B)] TOKEN_PERIOD               : .
@@ -106,7 +104,7 @@ $ ./cbc cobol-exemplos/prog001_divisoes.cob
 [SEQ 000022 | COL 21 (AREA B)] TOKEN_PERIOD               : .
 [SEQ 000022 | COL 23 (AREA B)] TOKEN_IDENTIFIER           : 2018-02-24
 [SEQ 000022 | COL 33 (AREA B)] TOKEN_PERIOD               : .
-[SEQ 000023 | COL 08 (AREA A)] TOKEN_IDENTIFIER           : SECURITY
+[SEQ 000023 | COL 08 (AREA A)] TOKEN_KEYWORD              : SECURITY
 [SEQ 000023 | COL 16 (AREA B)] TOKEN_PERIOD               : .
 [SEQ 000023 | COL 18 (AREA B)] TOKEN_IDENTIFIER           : O
 [SEQ 000023 | COL 20 (AREA B)] TOKEN_IDENTIFIER           : PROGRAMA
@@ -114,7 +112,7 @@ $ ./cbc cobol-exemplos/prog001_divisoes.cob
 [SEQ 000023 | COL 33 (AREA B)] TOKEN_IDENTIFIER           : CRIPTOGRAFIA
 [SEQ 000023 | COL 46 (AREA B)] TOKEN_IDENTIFIER           : XPTO
 [SEQ 000023 | COL 50 (AREA B)] TOKEN_PERIOD               : .
-[SEQ 000024 | COL 08 (AREA A)] TOKEN_IDENTIFIER           : REMARKS
+[SEQ 000024 | COL 08 (AREA A)] TOKEN_KEYWORD              : REMARKS
 [SEQ 000024 | COL 15 (AREA B)] TOKEN_PERIOD               : .
 [SEQ 000024 | COL 17 (AREA B)] TOKEN_IDENTIFIER           : O
 [SEQ 000024 | COL 19 (AREA B)] TOKEN_IDENTIFIER           : PROGRAMA
@@ -162,7 +160,7 @@ $ ./cbc cobol-exemplos/prog001_divisoes.cob
 <summary>prog002_operacoes.cob (320 tokens, exit 0)</summary>
 
 ```text
-$ ./cbc cobol-exemplos/prog002_operacoes.cob
+$ ./cbc -l cobol-exemplos/prog002_operacoes.cob
 [SEQ 000011 | COL 08 (AREA A)] TOKEN_KEYWORD              : IDENTIFICATION
 [SEQ 000011 | COL 23 (AREA B)] TOKEN_KEYWORD              : DIVISION
 [SEQ 000011 | COL 31 (AREA B)] TOKEN_PERIOD               : .
@@ -491,7 +489,7 @@ $ ./cbc cobol-exemplos/prog002_operacoes.cob
 <summary>prog003_calculadora.cob (229 tokens, exit 0)</summary>
 
 ```text
-$ ./cbc cobol-exemplos/prog003_calculadora.cob
+$ ./cbc -l cobol-exemplos/prog003_calculadora.cob
 [SEQ 000011 | COL 08 (AREA A)] TOKEN_KEYWORD              : IDENTIFICATION
 [SEQ 000011 | COL 23 (AREA B)] TOKEN_KEYWORD              : DIVISION
 [SEQ 000011 | COL 31 (AREA B)] TOKEN_PERIOD               : .
@@ -729,7 +727,7 @@ $ ./cbc cobol-exemplos/prog003_calculadora.cob
 <summary>prog004_folha_pgto.cob (221 tokens, exit 0)</summary>
 
 ```text
-$ ./cbc cobol-exemplos/prog004_folha_pgto.cob
+$ ./cbc -l cobol-exemplos/prog004_folha_pgto.cob
 [SEQ 000011 | COL 08 (AREA A)] TOKEN_KEYWORD              : IDENTIFICATION
 [SEQ 000011 | COL 23 (AREA B)] TOKEN_KEYWORD              : DIVISION
 [SEQ 000011 | COL 31 (AREA B)] TOKEN_PERIOD               : .
@@ -959,7 +957,7 @@ $ ./cbc cobol-exemplos/prog004_folha_pgto.cob
 <summary>prog005_strings.cob (236 tokens, exit 0)</summary>
 
 ```text
-$ ./cbc cobol-exemplos/prog005_strings.cob
+$ ./cbc -l cobol-exemplos/prog005_strings.cob
 [SEQ 000011 | COL 08 (AREA A)] TOKEN_KEYWORD              : IDENTIFICATION
 [SEQ 000011 | COL 23 (AREA B)] TOKEN_KEYWORD              : DIVISION
 [SEQ 000011 | COL 31 (AREA B)] TOKEN_PERIOD               : .
@@ -1026,7 +1024,7 @@ $ ./cbc cobol-exemplos/prog005_strings.cob
 [SEQ 000032 | COL 21 (AREA B)] TOKEN_IDENTIFIER           : SAUX
 [SEQ 000032 | COL 26 (AREA B)] TOKEN_KEYWORD              : TALLYING
 [SEQ 000032 | COL 35 (AREA B)] TOKEN_IDENTIFIER           : CONT
-[SEQ 000032 | COL 40 (AREA B)] TOKEN_IDENTIFIER           : FOR
+[SEQ 000032 | COL 40 (AREA B)] TOKEN_KEYWORD              : FOR
 [SEQ 000032 | COL 44 (AREA B)] TOKEN_KEYWORD              : CHARACTERS
 [SEQ 000032 | COL 54 (AREA B)] TOKEN_PERIOD               : .
 [SEQ 000033 | COL 13 (AREA B)] TOKEN_KEYWORD              : DISPLAY
@@ -1043,7 +1041,7 @@ $ ./cbc cobol-exemplos/prog005_strings.cob
 [SEQ 000036 | COL 21 (AREA B)] TOKEN_IDENTIFIER           : SAUX
 [SEQ 000036 | COL 26 (AREA B)] TOKEN_KEYWORD              : TALLYING
 [SEQ 000036 | COL 35 (AREA B)] TOKEN_IDENTIFIER           : CONT
-[SEQ 000036 | COL 40 (AREA B)] TOKEN_IDENTIFIER           : FOR
+[SEQ 000036 | COL 40 (AREA B)] TOKEN_KEYWORD              : FOR
 [SEQ 000036 | COL 44 (AREA B)] TOKEN_KEYWORD              : ALL
 [SEQ 000036 | COL 48 (AREA B)] TOKEN_LITERAL_ALPHANUMERIC : "L"
 [SEQ 000036 | COL 51 (AREA B)] TOKEN_PERIOD               : .
@@ -1061,7 +1059,7 @@ $ ./cbc cobol-exemplos/prog005_strings.cob
 [SEQ 000040 | COL 21 (AREA B)] TOKEN_IDENTIFIER           : SAUX
 [SEQ 000040 | COL 26 (AREA B)] TOKEN_KEYWORD              : TALLYING
 [SEQ 000040 | COL 35 (AREA B)] TOKEN_IDENTIFIER           : CONT
-[SEQ 000041 | COL 21 (AREA B)] TOKEN_IDENTIFIER           : FOR
+[SEQ 000041 | COL 21 (AREA B)] TOKEN_KEYWORD              : FOR
 [SEQ 000041 | COL 25 (AREA B)] TOKEN_KEYWORD              : CHARACTERS
 [SEQ 000041 | COL 36 (AREA B)] TOKEN_KEYWORD              : BEFORE
 [SEQ 000041 | COL 43 (AREA B)] TOKEN_KEYWORD              : INITIAL
@@ -1081,7 +1079,7 @@ $ ./cbc cobol-exemplos/prog005_strings.cob
 [SEQ 000045 | COL 21 (AREA B)] TOKEN_IDENTIFIER           : SAUX
 [SEQ 000045 | COL 26 (AREA B)] TOKEN_KEYWORD              : TALLYING
 [SEQ 000045 | COL 35 (AREA B)] TOKEN_IDENTIFIER           : CONT
-[SEQ 000046 | COL 21 (AREA B)] TOKEN_IDENTIFIER           : FOR
+[SEQ 000046 | COL 21 (AREA B)] TOKEN_KEYWORD              : FOR
 [SEQ 000046 | COL 25 (AREA B)] TOKEN_KEYWORD              : CHARACTERS
 [SEQ 000046 | COL 36 (AREA B)] TOKEN_KEYWORD              : AFTER
 [SEQ 000046 | COL 42 (AREA B)] TOKEN_KEYWORD              : INITIAL
@@ -1101,7 +1099,7 @@ $ ./cbc cobol-exemplos/prog005_strings.cob
 [SEQ 000050 | COL 21 (AREA B)] TOKEN_IDENTIFIER           : SAUX
 [SEQ 000050 | COL 26 (AREA B)] TOKEN_KEYWORD              : TALLYING
 [SEQ 000050 | COL 35 (AREA B)] TOKEN_IDENTIFIER           : YESNO
-[SEQ 000051 | COL 21 (AREA B)] TOKEN_IDENTIFIER           : FOR
+[SEQ 000051 | COL 21 (AREA B)] TOKEN_KEYWORD              : FOR
 [SEQ 000051 | COL 25 (AREA B)] TOKEN_KEYWORD              : LEADING
 [SEQ 000051 | COL 33 (AREA B)] TOKEN_LITERAL_ALPHANUMERIC : "H"
 [SEQ 000051 | COL 36 (AREA B)] TOKEN_PERIOD               : .
@@ -1204,7 +1202,7 @@ $ ./cbc cobol-exemplos/prog005_strings.cob
 <summary>prog006_files.cob (225 tokens, exit 0)</summary>
 
 ```text
-$ ./cbc cobol-exemplos/prog006_files.cob
+$ ./cbc -l cobol-exemplos/prog006_files.cob
 [SEQ 000011 | COL 08 (AREA A)] TOKEN_KEYWORD              : IDENTIFICATION
 [SEQ 000011 | COL 23 (AREA B)] TOKEN_KEYWORD              : DIVISION
 [SEQ 000011 | COL 31 (AREA B)] TOKEN_PERIOD               : .
@@ -1438,7 +1436,7 @@ $ ./cbc cobol-exemplos/prog006_files.cob
 <summary>prog007_loja.cob (566 tokens, exit 0)</summary>
 
 ```text
-$ ./cbc cobol-exemplos/prog007_loja.cob
+$ ./cbc -l cobol-exemplos/prog007_loja.cob
 [SEQ 000011 | COL 08 (AREA A)] TOKEN_KEYWORD              : IDENTIFICATION
 [SEQ 000011 | COL 23 (AREA B)] TOKEN_KEYWORD              : DIVISION
 [SEQ 000011 | COL 31 (AREA B)] TOKEN_PERIOD               : .
@@ -2010,13 +2008,13 @@ $ ./cbc cobol-exemplos/prog007_loja.cob
 </details>
 
 
-## 2.4 Resultados de erros
+### 2.3 Resultados de erros léxicos
 
-Quando encontra um indicador inválido na coluna 7, o leitor reporta um erro severo `[S]` em `stderr` e ignora a linha. Quando encontra um problema léxico nas colunas 8-72 (caractere inválido, identificador malformado ou acima de 30 caracteres, literal não terminado ou continuação incorreta), `emit_lexical_error` imprime o diagnóstico `[E]` em `stderr` com sequência e coluna, incrementa o contador de erros (fazendo o programa retornar código `1`) e emite `TOKEN_UNKNOWN` para que o restante do arquivo continue sendo analisado.
+Quando encontra um indicador inválido na coluna 7, o leitor reporta erro severo `[S]` em `stderr` e ignora a linha. Quando encontra um erro léxico nas colunas 8 a 72, `emit_lexical_error` imprime o diagnóstico `[E]` em `stderr` com sequência e coluna, incrementa o contador de erros (fazendo `./cbc` retornar `1`) e emite `TOKEN_UNKNOWN` para continuar analisando o arquivo.
 
-Abaixo estão os dez erros inseridos nos sete programas de teste e as respectivas saídas produzidas por `./cbc`.
+Abaixo estão os dez erros inseridos nos sete programas de teste e as saídas obtidas com `./cbc -l`.
 
-### 1. Literal alfanumérico não terminado (`prog001_divisoes.cob`)
+#### 1. Literal alfanumérico não terminado (`prog001_divisoes.cob`)
 
 Omissão das aspas de fechamento na instrução `DISPLAY`.
 
@@ -2036,7 +2034,7 @@ Token emitido em `stdout`:
 [SEQ 000055 | COL 21 (AREA B)] TOKEN_UNKNOWN              : "Hello world
 ```
 
-### 2. Indicador inválido na coluna 7 (`prog001_divisoes.cob`)
+#### 2. Indicador inválido na coluna 7 (`prog001_divisoes.cob`)
 
 Uso do caractere `X` na coluna 7, fora do conjunto permitido (espaço, `*`, `/`, `-`, `D`, `d`). O erro severo `[S]` descarta a linha.
 
@@ -2050,7 +2048,7 @@ Saída em `stderr`:
 [S] Indicator Error (cobol-exemplos/prog001_divisoes.cob, Seq 000055): Invalid indicator 'X' in Column 7.
 ```
 
-### 3. Identificador terminado em hífen (`prog002_operacoes.cob`)
+#### 3. Identificador terminado em hífen (`prog002_operacoes.cob`)
 
 Nome de variável encerrado com `-`, violando a regra de formação de identificadores.
 
@@ -2070,7 +2068,7 @@ Token emitido em `stdout`:
 [SEQ 000028 | COL 23 (AREA B)] TOKEN_UNKNOWN              : WRK-VALOR2-
 ```
 
-### 4. Caractere fora da linguagem (`prog002_operacoes.cob`)
+#### 4. Caractere fora da linguagem (`prog002_operacoes.cob`)
 
 Inserção do símbolo `@` como operando de `MOVE`.
 
@@ -2090,7 +2088,7 @@ Token emitido em `stdout`:
 [SEQ 000048 | COL 17 (AREA B)] TOKEN_UNKNOWN              : @
 ```
 
-### 5. Identificador acima de 30 caracteres (`prog003_calculadora.cob`)
+#### 5. Identificador acima de 30 caracteres (`prog003_calculadora.cob`)
 
 Declaração de variável com 35 caracteres (`WKS-RESULTADO-FORMATADO-COM-MASCARA`).
 
@@ -2110,7 +2108,7 @@ Token emitido em `stdout`:
 [SEQ 000020 | COL 15 (AREA B)] TOKEN_UNKNOWN              : WKS-RESULTADO-FORMATADO-COM-MASCARA
 ```
 
-### 6. Operador desconhecido (`prog003_calculadora.cob`)
+#### 6. Operador desconhecido (`prog003_calculadora.cob`)
 
 Uso de `^` em vez de `**` para exponenciação dentro de `COMPUTE`.
 
@@ -2130,7 +2128,7 @@ Token emitido em `stdout`:
 [SEQ 000072 | COL 43 (AREA B)] TOKEN_UNKNOWN              : ^
 ```
 
-### 7. Identificador iniciado com hífen (`prog004_folha_pgto.cob`)
+#### 7. Identificador iniciado com hífen (`prog004_folha_pgto.cob`)
 
 Identificador `-IDX` começando com hífen.
 
@@ -2150,7 +2148,7 @@ Token emitido em `stdout`:
 [SEQ 000034 | COL 23 (AREA B)] TOKEN_UNKNOWN              : -IDX
 ```
 
-### 8. Aspas incompatíveis no literal (`prog005_strings.cob`)
+#### 8. Aspas incompatíveis no literal (`prog005_strings.cob`)
 
 Literal aberto com aspas duplas e encerrado com aspa simples.
 
@@ -2170,9 +2168,9 @@ Token emitido em `stdout`:
 [SEQ 000033 | COL 34 (AREA B)] TOKEN_UNKNOWN              : " - FOR CHARACTERS'.
 ```
 
-### 9. Continuação com aspa diferente da abertura (`prog006_files.cob`)
+#### 9. Continuação com aspa diferente da abertura (`prog006_files.cob`)
 
-Literal aberto até a coluna 72 com `"` e continuado na linha `-` com `'`. O lexer reporta tanto o literal não terminado quanto o erro de continuação.
+Literal aberto até a coluna 72 com `"` e continuado na linha `-` com `'`. O lexer reporta o literal não terminado e o erro de continuação.
 
 ```cobol
            DISPLAY "GRAVANDO OS REGISTROS DO TRABALHADOR NO DISCO NO ARQ
@@ -2193,7 +2191,7 @@ Token emitido em `stdout`:
 [SEQ 000053 | COL 07 (UNK   )] TOKEN_UNKNOWN              : -
 ```
 
-### 10. Literal continuado e nunca fechado (`prog007_loja.cob`)
+#### 10. Literal continuado e nunca fechado (`prog007_loja.cob`)
 
 A continuação reabre com a aspa correta, mas não fecha o literal antes da linha normal seguinte.
 
@@ -2212,5 +2210,253 @@ Token emitido em `stdout`:
 
 ```text
 [SEQ 000203 | COL 20 (AREA B)] TOKEN_UNKNOWN              : "PID JAH EXISTE E GRAVADO NO ARQUIVO DE ARMAZE       NAMENTO - PID: WS-ULTIMO-PID
+```
+
+
+## 3. Parte 2: Análise Sintática e AST
+
+### 3.1 Arquitetura do parser, copybooks e AST
+
+A análise sintática segue a Seção 3 de [EspecificacaoCOBOL.md](EspecificacaoCOBOL.md) e foi construída com GNU Bison (`bison -d`) sobre o fluxo de tokens coletado pelo lexer:
+
+- [include/parser.h](include/parser.h) e [src/parser.y](src/parser.y): definem a gramática em Bison com `%define api.prefix {cob_}` (evitando conflito de símbolos com o `yylex()` gerado pelo Flex) e `%define parse.error verbose` para mensagens detalhadas de erro com arquivo, linha/sequência, coluna e lexema. O adaptador `cob_lex()` lê sequencialmente o `TokenList`, converte palavras-chave para os tokens do Bison e agrupa comment-entries livres da `IDENTIFICATION DIVISION` (`AUTHOR.`, `INSTALLATION.`, `DATE-WRITTEN.`, `DATE-COMPILED.`, `SECURITY.`, `REMARKS.`) em um par `T_ID_COMMENT_HDR` / `T_COMMENT_TEXT`.
+- Hierarquia das divisões: o símbolo inicial `program` exige `IDENTIFICATION DIVISION.` seguida de `PROGRAM-ID.`, aceita `ENVIRONMENT DIVISION.` (`CONFIGURATION SECTION.`, `SPECIAL-NAMES.` com `DECIMAL-POINT IS COMMA` e `CRT STATUS`, `INPUT-OUTPUT SECTION.` e `FILE-CONTROL.`/`SELECT`) e `DATA DIVISION.` (`FILE SECTION.` com `FD`/`SD`, `WORKING-STORAGE`, `LOCAL-STORAGE`, `LINKAGE` e `SCREEN SECTION`, com cláusulas de item de dados em ordem livre), exige `PROCEDURE DIVISION [USING ...] [RETURNING ...].` (com seções, parágrafos vazios ou com sentenças, e instruções terminadas por `.`) e aceita o encerramento opcional `END PROGRAM <nome>.`.
+- Comandos e expressões suportados: `DISPLAY` (incluindo `AT LINE/COLUMN`, `UPON` e `WITH NO ADVANCING`), `ACCEPT` (`FROM DATE/TIME/...`), `MOVE`, `ADD`, `SUBTRACT`, `MULTIPLY`, `DIVIDE`, `COMPUTE`, `IF`/`ELSE`/`END-IF` (incluindo `IF` sem `END-IF` encerrado por `END-PERFORM`, `END-EVALUATE` ou `.`), `EVALUATE`/`WHEN`/`WHEN OTHER`/`END-EVALUATE`, `PERFORM` inline e out-of-line (`TIMES`, `UNTIL`, `VARYING ... FROM ... BY ... UNTIL ... AFTER ...`), `OPEN` (múltiplos modos), `CLOSE`, `READ`, `WRITE`, `REWRITE`, `DELETE`, `START`, `GO TO`, `ALTER`, `CALL`, `CANCEL`, `STOP RUN`, `GOBACK`, `EXIT`, `CONTINUE`, `NEXT SENTENCE`, `INITIALIZE`, `INSPECT`, `STRING`, `UNSTRING`, `SET`, `SEARCH`, `SORT`, `MERGE`, `RELEASE` e `RETURN`. Nas expressões e condições, a gramática trata qualificação (`OF`/`IN`), subscritos multidimensionais (`DPTO(IDX, 1)`), modificação de referência (`WRK-NOME(WRK-IND2:1)`), funções intrínsecas (`FUNCTION REVERSE`, `FUNCTION UPPER-CASE`, `FUNCTION RANDOM`), `LENGTH OF`, testes de classe (`IS NOT NUMERIC`), operadores relacionais e condições combinadas abreviadas (`IF WKS-OPCAO = "S" OR "U"`). A gramática possui zero conflitos reduce/reduce no Bison; os conflitos shift/reduce remanescentes correspondem ao fechamento opcional de blocos COBOL sem terminador explícito (`IF` sem `END-IF`, cláusulas `AT END` / `INVALID KEY` / `ON SIZE ERROR`), resolvidos pelo comportamento padrão de *shift* do Bison (associando ao bloco mais interno).
+- Expansão de copybooks (`COPY`): em `lex_cobol_file`, quando o modo parser está ativo, toda diretiva `COPY <nome>.` busca o arquivo (`.cpy`, `.cbl`, `.cob`) nos diretórios informados via `-I`, no diretório do arquivo fonte e em `codigo_fonte_cobol/`, expandindo recursivamente seu conteúdo (até profundidade 16) no fluxo de tokens. Caso o arquivo não exista, o compilador emite aviso `[W]` e preserva um nó `AST_COPY` para que a análise continue.
+- [include/ast.h](include/ast.h) e [src/ast.c](src/ast.c): implementam a árvore sintática abstrata (`ASTNode`) com tipo do nó (`ASTKind`), posição original (`seq_num`, `col`), textos/atributos e lista ordenada de filhos, além das rotinas de impressão (`./cbc -a`) e liberação de memória (`ast_free`). A árvore já preserva níveis de dados, cláusulas `PIC`/`VALUE`/`OCCURS`, descritores `SELECT`/`FD`, seções, parágrafos e árvores de expressão para a análise semântica (Parte 3) e geração de código MIPS (Parte 5).
+
+Uso de ferramentas de IA na Parte 2: seguindo o fluxo do projeto, o arquivo de especificação Yacc/Bison [src/parser.y](src/parser.y) foi elaborado com apoio de IA (Gemini via Antigravity) para cobrir o subconjunto completo exigido pelos programas da disciplina e eliminar conflitos reduce/reduce, além da atualização deste relatório. A integração com o `TokenList`, a expansão de `COPY`, a estrutura da AST e a CLI seguem a arquitetura em C do repositório.
+
+### 3.2 Resultados dos testes sintáticos
+
+Todos os 14 programas de teste de `cobol-exemplos/` e `exemplos/` passam na análise léxica e sintática (`make test`), incluindo a expansão automática de `COPY002A.cpy` em `CAD0002A.cbl` e de `COD001A.cpy` em `PROG024A.cbl`.
+
+| Programa | Recursos exercitados | Nós AST | Exit |
+| --------------------------------------- | --------------------------------------------- | ------: | ---: |
+| `cobol-exemplos/prog001_divisoes.cob` | Quatro divisões, comment-entries (`AUTHOR`, `SECURITY`, `REMARKS`), `END PROGRAM` | 19 | 0 |
+| `cobol-exemplos/prog002_operacoes.cob` | Qualificação `OF`, aritmética múltipla, `ON SIZE ERROR` | 260 | 0 |
+| `cobol-exemplos/prog003_calculadora.cob` | `FUNCTION UPPER-CASE`, condições abreviadas (`OR "U" OR "M"`), `COMPUTE **` | 170 | 0 |
+| `cobol-exemplos/prog004_folha_pgto.cob` | `OCCURS ... INDEXED BY`, `SET`, `SEARCH`, continuação de identificador | 154 | 0 |
+| `cobol-exemplos/prog005_strings.cob` | `INSPECT` (`TALLYING`, `REPLACING`, `CONVERTING`) | 152 | 0 |
+| `cobol-exemplos/prog006_files.cob` | `FILE-CONTROL`, `FD`, `OPEN`/`WRITE`/`CLOSE`, subscritos bidimensionais | 130 | 0 |
+| `cobol-exemplos/prog007_loja.cob` | Arquivo `INDEXED`/`DYNAMIC`, `START`, `READ`, `EVALUATE`, `INVALID KEY` | 371 | 0 |
+| `exemplos/BUSCA01A.cbl` | `SPECIAL-NAMES` (`DECIMAL-POINT IS COMMA`), seções, `READ ... AT END / NOT AT END` | 115 | 0 |
+| `exemplos/CAD0002A.cbl` | `LINKAGE SECTION`, `COPY COPY002A.`, `USING`, `LENGTH OF`, refmod `(i:1)`, `FUNCTION REVERSE` | 643 | 0 |
+| `exemplos/CAD0004A.cbl` | Parágrafos vazios (`0001-END.`), `PERFORM ... UNTIL`, escrita sequencial | 74 | 0 |
+| `exemplos/CAD0005A.cbl` | `PERFORM VARYING` inline com `IF` fechado por `END-PERFORM`, continuação de string | 356 | 0 |
+| `exemplos/CAIXAREG.cbl` | Máscara `PIC ZZZ.ZZZ.ZZZ,ZZ`, múltiplas seções, `COMPUTE` | 285 | 0 |
+| `exemplos/CALCMD01.cbl` | `IF` aninhados, `AND` múltiplo, `COMPUTE` com parênteses | 207 | 0 |
+| `exemplos/PROG024A.cbl` | `COPY COD001A.`, `OPEN INPUT ... EXTEND ...`, `CALL 'PROGDATA' USING`, `EVALUATE` | 1002 | 0 |
+
+Além dos 14 programas acima, o compilador foi testado sobre os 83 arquivos `.cbl`/`.cob` do submódulo [codigo_fonte_cobol/](codigo_fonte_cobol/): todos os 71 programas COBOL padrão em formato fixo válidos passaram com código de saída `0`. Os 12 arquivos restantes falharam por razões externas à gramática COBOL padrão: 6 contêm marcadores de conflito de merge do Git no repositório de origem (`CAD0005A.cbl`, `PROG002A.cbl`, `PROG010A.cbl`, `PROG023C.cbl`, `SORT001A.cbl`, `VALIDA1B.cbl`), 2 usam SQL embutido `EXEC SQL` (`PROG006A.cbl`, `clientes-sql.cbl`), 1 é uma definição de mapa BMS/CICS (`TELABMS.cbl`), 1 está em formato livre (`CBREAKEX.cbl`), 1 está totalmente comentado sem divisões (`CLIESQL01.cbl`) e 1 possui um identificador de 31 caracteres que viola o limite de 30 caracteres da especificação (`PROG042A.cbl`).
+
+<details>
+<summary>Trecho da AST gerada para exemplos/BUSCA01A.cbl (./cbc -a)</summary>
+
+```text
+$ ./cbc -a exemplos/BUSCA01A.cbl
+PROGRAM [BUSCA01A] @1:8
+  IDENTIFICATION_DIVISION [BUSCA01A] @10:8
+  ENVIRONMENT_DIVISION @20:8
+    CONFIGURATION_SECTION @15:8
+      SPECIAL_NAMES @15:8
+        CLAUSE [DECIMAL-POINT-IS-COMMA] @13:34
+    FILE_CONTROL @20:8
+      SELECT [ARQUIVO-ENTRADA] @18:47
+        CLAUSE [ASSIGN] @17:45
+          LITERAL_STR ['CADASTRO2.dat'] @17:45
+        CLAUSE [ORGANIZATION] @18:37
+  DATA_DIVISION @36:8
+    DATA_SECTION [FILE] @28:8
+      FD [ARQUIVO-ENTRADA] @28:8
+        DATA_ITEM (level=01) [REGISTRO-ENTRADA] @23:27
+        DATA_ITEM (level=05) [NOME] @24:62
+          CLAUSE [PIC] <X(30)> @24:44
+          CLAUSE [VALUE] @24:62
+            FIGURATIVE [SPACES] @24:56
+        DATA_ITEM (level=05) [IDADE] @25:61
+          CLAUSE [PIC] <9(02)> @25:44
+          CLAUSE [VALUE] @25:61
+            FIGURATIVE [ZEROS] @25:56
+        DATA_ITEM (level=05) [CPF] @26:61
+          CLAUSE [PIC] <9(11)> @26:44
+          CLAUSE [VALUE] @26:61
+            FIGURATIVE [ZEROS] @26:56
+    DATA_SECTION [WORKING-STORAGE] @36:8
+      DATA_ITEM (level=01) [WRK-FIM-ARQUIVO] @29:59
+        CLAUSE [PIC] <X(01)> @29:44
+        CLAUSE [VALUE] @29:59
+          LITERAL_STR ['N'] @29:56
+      DATA_ITEM (level=01) [WRK-CPF-PROCURADO] @30:61
+        CLAUSE [PIC] <9(11)> @30:44
+        CLAUSE [VALUE] @30:61
+          FIGURATIVE [ZEROS] @30:56
+      DATA_ITEM (level=01) [WRK-CPF-LISTADO] @31:61
+        CLAUSE [PIC] <9(11)> @31:44
+        CLAUSE [VALUE] @31:61
+          FIGURATIVE [ZEROS] @31:56
+      DATA_ITEM (level=01) [WRK-CPF-ENCONTRADO] @32:59
+        CLAUSE [PIC] <X(01)> @32:44
+        CLAUSE [VALUE] @32:59
+          LITERAL_STR ['N'] @32:56
+      DATA_ITEM (level=01) [WRK-IND1] @33:61
+```
+
+</details>
+
+<details>
+<summary>Expansão de COPY COPY002A. na AST de exemplos/CAD0002A.cbl (./cbc -a)</summary>
+
+```text
+    DATA_SECTION [LINKAGE] @80:8
+      DATA_ITEM (level=01) [COPY002A-HEADER] @19:27
+      DATA_ITEM (level=05) [COPY002A-COD-BOOK] @20:67
+        CLAUSE [PIC] <X(08)> @20:45
+        CLAUSE [VALUE] @20:67
+          LITERAL_STR ['COPY002A'] @20:57
+      DATA_ITEM (level=05) [COPY002A-TAM-BOOK] @21:62
+        CLAUSE [PIC] <9(05)> @21:45
+        CLAUSE [VALUE] @21:62
+          LITERAL_NUM [02125] @21:57
+      DATA_ITEM (level=01) [COPY002A-REGISTRO] @22:29
+      DATA_ITEM (level=05) [COPY002A-QUANT-REG] @23:50
+        CLAUSE [PIC] <9(02)> @23:45
+      DATA_ITEM (level=05) [COPY002A-CADUSUAR] @24:46
+        CLAUSE (50) [OCCURS] <50> @24:46
+      DATA_ITEM (level=10) [COPY002A-COD] @25:50
+        CLAUSE [PIC] <9(02)> @25:45
+      DATA_ITEM (level=10) [COPY002A-NOME] @26:50
+        CLAUSE [PIC] <X(30)> @26:45
+      DATA_ITEM (level=10) [COPY002A-IDADE] @27:50
+        CLAUSE [PIC] <9(02)> @27:45
+      DATA_ITEM (level=10) [COPY002A-DATA-NASC] @28:50
+```
+
+</details>
+
+### 3.3 Resultados de erros sintáticos
+
+Quando a entrada viola a gramática da Seção 3, `cob_error` reporta `[E] Syntax Error` em `stderr` com arquivo, sequência/linha, coluna, descrição do token inesperado/esperado e lexema próximo, liberando a AST parcial e encerrando com código `1`.
+
+Abaixo estão oito testes de erro sintático injetados nos programas de teste e as saídas reais de `./cbc`.
+
+#### 1. Ausência de `PROGRAM-ID` (`cobol-exemplos/prog001_divisoes.cob`)
+
+Remoção da linha `PROGRAM-ID. PROG0001.` logo após `IDENTIFICATION DIVISION.`.
+
+```cobol
+       IDENTIFICATION DIVISION.
+       AUTHOR. ENIO BASSO.
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Syntax Error (cobol-exemplos/prog001_divisoes.cob, Seq 000018, Col 8): syntax error, unexpected T_ID_COMMENT_HDR, expecting KW_PROGRAM_ID (near "AUTHOR")
+```
+
+#### 2. Ordem incorreta de divisões (`exemplos/BUSCA01A.cbl`)
+
+Substituição de `ENVIRONMENT DIVISION.` por `DATA DIVISION.` antes de `CONFIGURATION SECTION.`.
+
+```cobol
+       DATA DIVISION.
+       CONFIGURATION SECTION.
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Syntax Error (exemplos/BUSCA01A.cbl, Seq 000011, Col 8): syntax error, unexpected KW_CONFIGURATION, expecting KW_PROCEDURE (near "CONFIGURATION")
+```
+
+#### 3. Ausência de `PROCEDURE DIVISION` (`exemplos/CAD0004A.cbl`)
+
+Remoção do cabeçalho obrigatório `PROCEDURE DIVISION.` antes do primeiro parágrafo.
+
+```cobol
+       01  WRK-CPF    PIC X(14).
+       0001-PROCESSAR.
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Syntax Error (exemplos/CAD0004A.cbl, Seq 000031, Col 8): syntax error, unexpected T_IDENTIFIER, expecting KW_PROCEDURE (near "0001-PROCESSAR")
+```
+
+#### 4. Ponto final omitido em item de dados (`cobol-exemplos/prog002_operacoes.cob`)
+
+Remoção do ponto final em `77 WRK-VALOR1 PIC 9(10) VALUES 10`.
+
+```cobol
+           77 WRK-VALOR1      PIC 9(10) VALUES 10
+           77 WRK-VALOR2      PIC 9(10) VALUES ZEROS.
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Syntax Error (cobol-exemplos/prog002_operacoes.cob, Seq 000017, Col 15): syntax error, unexpected T_IDENTIFIER, expecting KW_COMP (near "WRK-VALOR2")
+```
+
+#### 5. `MOVE` sem palavra-chave `TO` (`exemplos/CAD0004A.cbl`)
+
+Omissão de `TO` entre origem e destino na instrução `MOVE`.
+
+```cobol
+           MOVE WRK-NOME NOME
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Syntax Error (exemplos/CAD0004A.cbl, Seq 000054, Col 26): syntax error, unexpected T_IDENTIFIER, expecting KW_TO (near "NOME")
+```
+
+#### 6. `PERFORM` inline sem `END-PERFORM` (`exemplos/CAD0005A.cbl`)
+
+Remoção de `END-PERFORM` ao final de um laço `PERFORM VARYING` inline.
+
+```cobol
+           PERFORM VARYING WRK-IND1 FROM 1 BY 1 UNTIL WRK-FIM-ARQ EQUAL 'S'
+               PERFORM 0001-LER-ARQUIVO-ENT
+               ...
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Syntax Error (exemplos/CAD0005A.cbl, Seq 000166, Col 12): syntax error, unexpected T_PERIOD (near ".")
+```
+
+#### 7. Expressão incompleta em `COMPUTE` (`exemplos/CALCMD01.cbl`)
+
+Remoção do operando direito do operador `/` em `COMPUTE`.
+
+```cobol
+              COMPUTE WRK-VALOR-MEDIO =  WRK-VALOR-MEDIO /
+              DISPLAY '-------------'
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Syntax Error (exemplos/CALCMD01.cbl, Seq 000136, Col 15): syntax error, unexpected KW_DISPLAY (near "DISPLAY")
+```
+
+#### 8. Ponto final omitido em `SELECT` (`exemplos/BUSCA01A.cbl`)
+
+Remoção do ponto final ao término da entrada `SELECT` na `FILE-CONTROL`.
+
+```cobol
+           SELECT ARQUIVO-ENTRADA ASSIGN TO 'CADASTRO2.dat'
+               ORGANIZATION IS LINE SEQUENTIAL
+```
+
+Saída em `stderr` (exit `1`):
+
+```text
+[E] Syntax Error (exemplos/BUSCA01A.cbl, Seq 000020, Col 8): syntax error, unexpected KW_DATA, expecting KW_STATUS (near "DATA")
 ```
 
