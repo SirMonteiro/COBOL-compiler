@@ -14,16 +14,29 @@ Repositório público: https://github.com/SirMonteiro/COBOL-compiler
 
 ```sh
 make            # compila o binário ./cbc (Flex + Bison + GCC)
-./cbc programa.cbl              # executa análise léxica, sintática e semântica
+./cbc programa.cbl -o prog.s    # pipeline completo (lex + parse + sema + MIPS32)
+./cbc -t mars programa.cbl -o prog.asm  # gera assembly MIPS32 para MARS/SPIM
 ./cbc -l programa.cbl           # executa apenas o lexer e imprime o fluxo de tokens
 ./cbc -p programa.cbl           # executa lexer + parser (sem análise semântica)
 ./cbc -a programa.cbl           # imprime a AST gerada pelo parser
-./cbc -s programa.cbl           # imprime a tabela de símbolos da análise semântica
-./cbc -I dir/ programa.cbl      # adiciona diretório extra de busca para COPY
-make test       # executa lex + parse + semântica em cobol-exemplos/*.cob e exemplos/*.cbl
+./cbc -s programa.cbl           # imprime a tabela de símbolos e para após a semântica
+./cbc -I dir/ programa.cbl      # adiciona diretório extra de busca para COPY e CALL
+make test       # compila, monta e linka os 14 programas de teste para ELF MIPS32
+make test-sema  # executa lex + parse + semântica (-s) nos 14 programas de teste
 make test-parse # executa apenas lex + parse (-p) nos 14 programas de teste
 make test-lex   # executa apenas o lexer (-l) nos 14 programas de teste
 ```
+
+Para montar, linkar e executar um binário estático MIPS32 Linux (`mipsel`, sem `libc`):
+
+```sh
+./cbc exemplos/CALCMD01.cbl -o CALCMD01.s
+clang -target mipsel-unknown-linux-gnu -mabi=32 -march=mips32 -mno-abicalls -fno-pic -c CALCMD01.s -o CALCMD01.o
+ld.lld -m elf32ltsmip -static -e __start CALCMD01.o -o CALCMD01
+qemu-mipsel ./CALCMD01
+```
+
+Para arquiteturas MIPS32 big-endian (`mips`, comuns em roteadores Atheros/Broadcom), basta trocar `-target mipsel-unknown-linux-gnu` e `elf32ltsmip` por `-target mips-unknown-linux-gnu` e `elf32btsmip` usando o mesmo `.s`.
 
 Para gerar a versão em PDF deste relatório na raiz do repositório:
 
@@ -2685,4 +2698,104 @@ Saída em `stderr` (exit `1`):
 ```text
 [E] Semantic Error (exemplos/CALCMD01.cbl, Seq 000125, Col 22): Undeclared identifier "WRK-NAO-DECL".
 ```
+
+## 5. Parte 5: Geração de Código MIPS32
+
+### 5.1 Estratégia e arquitetura do gerador
+
+O backend gera assembly MIPS32 genérico diretamente a partir da AST validada pela análise semântica, usando apenas instruções inteiras padrão de 32 bits (`addiu`, `addu`, `subu`, `mult`, `div`, `mflo`, `mfhi`, `lw`, `sw`, `lb`, `lbu`, `sb`, `beq`, `bne`, `blt`, `bgt`, `ble`, `bge`, `j`, `jal`, `jr`, `sll`, `srl`, `and`, `or`, `xori`, `syscall`). Sem instruções específicas de versões recentes ou ponto flutuante em hardware, o mesmo arquivo `.s` monta para binários ELF estáticos MIPS32 little-endian (`mipsel`, compatível com `qemu-mipsel`, roteadores MediaTek/OpenWrt e PlayStation 2 Linux) e big-endian (`mips`, roteadores Atheros/Broadcom), além de oferecer o modo `-t mars` para o simulador MARS/SPIM.
+
+Os arquivos adicionados nessa etapa são:
+
+- [include/codegen.h](include/codegen.h): define os alvos (`MIPS_TARGET_LINUX` e `MIPS_TARGET_MARS`), a estrutura `CodegenOpts` e as funções `codegen_mips` e `codegen_emit_runtime`.
+- [src/codegen.c](src/codegen.c): constrói o layout contíguo de memória de cada programa a partir da `DATA DIVISION`, calcula deslocamentos de grupos, `REDEFINES` e `OCCURS`, descobre e compila automaticamente subprogramas chamados via `CALL`, e emite código MIPS32 para todos os comandos da `PROCEDURE DIVISION`.
+- [src/codegen_rt.c](src/codegen_rt.c): fornece a biblioteca de runtime embutida em MIPS32 (sem dependência de `libc`), separando a camada de chamadas de sistema (Linux MIPS o32: `4001` exit, `4003` read, `4004` write, `4005` open, `4006` close, `4013` time; MARS: `10`, `11`, `8`, `13`, `14`, `15`, `16`) das rotinas COBOL independentes de sistema operacional.
+- [src/parser.y](src/parser.y) e [src/main.c](src/main.c): o parser passou a preservar na AST cláusulas necessárias à geração (`WITH NO ADVANCING`, `ACCEPT ... FROM DATE/TIME/DAY/DAY-OF-WEEK`, `DIVIDE ... INTO/BY`, `ROUNDED`, `INITIALIZE ... REPLACING`, `INSPECT` completo, `STRING`/`UNSTRING`), e `main.c` passou a acionar o backend MIPS32 por padrão (com flags `-S`/`--mips` e `-t linux|mars`).
+
+Principais decisões técnicas adotadas no gerador:
+
+1. Layout contíguo de bytes na `.data`: cada item raiz (`01`, `77` e índices `INDEXED BY`) vira um buffer contínuo de bytes pré-inicializado com seus `VALUE` (incluindo `FILLER VALUE '/'`, `ALL '-'`, `SPACES`, `ZEROS` e replicação de `OCCURS`). Campos subordinados acessam esse buffer por deslocamento exato, o que garante que grupos compostos (`WRK-DATA-NASC-AUX`, `WRK-MASC-DATA`, `REGISTRO-CADASTRO`, `FD-ARQ-ENT`) e `REDEFINES` compartilhem memória exatamente como no COBOL. Todas as palavras `.word` (descritores de arquivo, ponteiros da `LINKAGE` e tabelas do runtime) recebem `.align 2` para evitar falhas de alinhamento (`AdEL`/`AdES`) em hardware MIPS real.
+2. Aritmética decimal em ponto fixo sem overflow: o gerador detecta a maior precisão decimal `V` usada no programa (até 4 casas, `prog_scale = 10^prog_frac`, por exemplo `10000` em `CALCMD01.cbl` e `100` em `CAIXAREG.cbl`). As rotinas `_rt_mul_scaled` e `_rt_div_scaled` decompõem quociente e resto antes de escalar, evitando estouro de 32 bits em produtos intermediários. Campos numéricos sem sinal com 10 ou mais dígitos (como `CPF PIC 9(11)` em `BUSCA01A.cbl`) usam rotinas de cadeia de dígitos (`_rt_accept_digits`, `_rt_move_digits`, `_rt_cmp_digits`) para não depender de inteiros de 32 bits. Máscaras editadas (`PIC ZZZ.ZZZ.ZZZ,ZZ`, `PIC -ZZZZZZZZZ9.99`) são formatadas em tempo de execução por `_rt_format_edited`, respeitando `DECIMAL-POINT IS COMMA`.
+3. Controle de fluxo fiel ao COBOL via pilha de `PERFORM`: cada seção e parágrafo é emitido em sequência com um identificador global. Ao entrar em um `PERFORM` (simples, `THRU`, `TIMES`, `UNTIL` ou `VARYING`), `_rt_perf_push` empilha o bloco final esperado e o endereço de retorno; ao fim de cada bloco, `_rt_perf_chk` verifica o topo da pilha e retorna se houver correspondência ou segue para o bloco seguinte. Isso resolve de forma uniforme queda sequencial entre parágrafos, seções com múltiplos parágrafos, `PERFORM` recursivo (como em `CALCMD01.cbl`) e desvios `GO TO` internos ou recursivos dentro de uma seção (como `0014-END`, `0015-VALIDAR-CARGO` e `0016-VALIDAR-EMAIL` em `CAD0002A.cbl`) sem vazar espaço na pilha `$sp`.
+4. Subprogramas (`CALL`) e `LINKAGE SECTION`: antes da emissão, o gerador varre a AST atrás de chamadas literais `CALL 'NOME'` (como `CALL 'PROGDATA' USING COD001A-REGISTRO` em `PROG024A.cbl`), localiza `PROGDATA.cbl` nos diretórios `-I`, no diretório do arquivo fonte ou em `codigo_fonte_cobol/`, executa lex, parse e análise semântica e emite o subprograma como sub-rotina `cob_sub_PROGDATA` no mesmo `.s`. Cada item `01` da `LINKAGE SECTION` usa um ponteiro indireto `p<id>_lp<v>` pré-inicializado para um buffer padrão, permitindo tanto receber endereços via `$a0`..`$a3` em `CALL ... USING` quanto executar programas de `LINKAGE` de forma independente (caso de `CAD0002A.cbl`).
+
+Uso de ferramentas de IA na Parte 5: o grupo utilizou modelos de linguagem (Gemini via Antigravity) no apoio à escrita das rotinas em assembly MIPS32 de [src/codegen_rt.c](src/codegen_rt.c) e do emissor em [src/codegen.c](src/codegen.c), além da depuração de casos de alinhamento de memória, aritmética de ponto fixo em 32 bits e testes automatizados de execução.
+
+### 5.2 Resultados de compilação, montagem e linkagem MIPS32
+
+O alvo `make test` (equivalente a `make test-mips`) compila todos os 14 programas principais (`cobol-exemplos/*.cob` e `exemplos/*.cbl`) com `./cbc`, monta com `clang -target mipsel-unknown-linux-gnu -mabi=32 -march=mips32 -mno-abicalls -fno-pic` e gera executáveis ELF estáticos MIPS32 com `ld.lld -m elf32ltsmip -static -e __start`. Todos os 14 passam com zero erros de compilação, montagem ou linkagem.
+
+| Programa | Linhas `.s` | ELF `mipsel` (bytes) | Módulos | Resultado |
+| ------------------------- | ----------: | -------------------: | ------: | --------- |
+| `prog001_divisoes.cob` | 1278 | 13684 | 1 | OK |
+| `prog002_operacoes.cob` | 2095 | 18788 | 1 | OK |
+| `prog003_calculadora.cob` | 1983 | 18844 | 1 | OK |
+| `prog004_folha_pgto.cob` | 1904 | 18012 | 1 | OK |
+| `prog005_strings.cob` | 1892 | 17540 | 1 | OK |
+| `prog006_files.cob` | 1685 | 16404 | 1 | OK |
+| `prog007_loja.cob` | 2606 | 23880 | 1 | OK |
+| `BUSCA01A.cbl` | 1556 | 15876 | 1 | OK |
+| `CAD0002A.cbl` | 4515 | 41480 | 1 | OK |
+| `CAD0004A.cbl` | 1446 | 15004 | 1 | OK |
+| `CAD0005A.cbl` | 2650 | 24216 | 1 | OK |
+| `CAIXAREG.cbl` | 2215 | 20376 | 1 | OK |
+| `CALCMD01.cbl` | 1950 | 18968 | 1 | OK |
+| `PROG024A.cbl` | 6748 | 53268 | 2 (`+PROGDATA`) | OK |
+
+Na varredura completa do repositório `codigo_fonte_cobol/` (83 arquivos `.cbl`/`.cob`), todos os **70/70** programas válidos na análise semântica foram compilados, montados e linkados com sucesso tanto para `mipsel` (little-endian) quanto para `mips` (big-endian), com zero falhas de geração ou linkagem. Os 13 arquivos restantes são os mesmos já identificados nas partes anteriores (6 com marcadores de conflito de merge do Git, 2 com `EXEC SQL`, 1 mapa BMS/CICS, 1 em formato livre, 1 totalmente comentado, 1 com identificador acima de 30 caracteres e 1 com variável não declarada).
+
+Trecho do assembly MIPS32 gerado para `cobol-exemplos/prog001_divisoes.cob`:
+
+```mips
+# Program : PROG0001
+# Target  : Linux MIPS32 o32 ELF (static, no libc)
+# Modules : 1
+    .set reorder
+    .text
+    .globl __start
+__start:
+    j    p0_b0
+
+p0_b0: # PARA MAIN-PROCEDURE
+    la   $v0, cob_s0
+    li   $v1, 11
+    move $a0, $v0
+    move $a1, $v1
+    jal  _rt_print_bytes
+    jal  _rt_print_nl
+    la   $v0, cob_s1
+    li   $v1, 14
+    move $a0, $v0
+    move $a1, $v1
+    jal  _rt_print_bytes
+    jal  _rt_print_nl
+    li   $a0, 0
+    jal  _rt_exit
+```
+
+Inspeção do executável gerado (`file CALCMD01`):
+
+```text
+CALCMD01: ELF 32-bit LSB executable, MIPS, MIPS32 version 1 (SYSV), statically linked, not stripped
+```
+
+### 5.3 Verificação de execução dos 7 programas avaliados
+
+Todos os sete programas de `exemplos/` foram executados a partir dos binários ELF MIPS32 compilados (simulando entradas de teclado e arquivos temporários), confirmando saída, cálculos decimais, máscaras editadas, validação de campos, manipulação de arquivos sequenciais e chamada de subprograma (`CALL 'PROGDATA'`).
+
+1. `CALCMD01.cbl` (entradas `8.5`, `7.5`, `10`, divisor `5`): somou corretamente em `PIC 9(8)V9999` (`00000026,0000`) e calculou a média `00000005,2000`.
+2. `CAIXAREG.cbl` (itens `20.00`, `30.50`, `49.50`, desconto `S` de `10`): exibiu o recibo formatado com `PIC ZZZ.ZZZ.ZZZ,ZZ` (`100,00`, desconto `-10,00`, total final `90,00`).
+3. `CAD0004A.cbl` (dois cadastros): gravou os registros de largura fixa no arquivo `CADASTRO.dat` (`Gabriel Monteiro              025123.456.789-01` e `Maria Silva                   030987.654.321-00`).
+4. `BUSCA01A.cbl` (busca do CPF de 11 dígitos `98765432100` em `CADASTRO2.dat`): localizou o segundo registro sem estouro de 32 bits (`CPF ENCONTRADO!`, `QUANTIDADE DE REGISTROS LIDOS: 02`).
+5. `CAD0002A.cbl` (execução independente com `LINKAGE SECTION` do copybook `COPY002A`): validou nome sem dígitos, idade maior ou igual a 18 via `EVALUATE`, data de nascimento, cargo (`GO TO` interno), e-mail (`INSPECT FUNCTION REVERSE`) e finalizou em `FIM` com `DADOS CADASTRADOS COM SUCESSO!`.
+6. `CAD0005A.cbl` (dois cadastros seguidos de listagem): persistiu os contatos em `CADAGENDA.dat`, recarregou na tabela `OCCURS 10` e listou ambos com `QTDE. REGISTROS: 02`.
+7. `PROG024A.cbl` (cadastro, empréstimo, listagem, busca por código e devolução): invocou automaticamente o subprograma `PROGDATA.cbl` via `CALL 'PROGDATA' USING COD001A-REGISTRO`, obteve a data do sistema via syscall `4013`, atualizou a tabela `OCCURS 50` e gravou tanto `BIBLIOTECA.dat` quanto o histórico completo em `BIBLIOTECA.txt`:
+
+```text
+00101Compiladores                            Aho Ullman          S20/11/2026
+CADASTRAR |20/11/2026|00101|Compiladores                            |Aho Ullman          |S|
+EMPRESTAR |20/11/2026|00101|Compiladores                            |Aho Ullman          |N|20/11/2026|
+DEVOLVER  |20/11/2026|00101|Compiladores                            |Aho Ullman          |S|20/11/2026|20/11/2026
+```
+
 

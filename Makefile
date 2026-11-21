@@ -20,9 +20,12 @@ RM   := rm
 CFLAGS := -O3 -Wall -Wformat -I$(INC_DIR) -I$(SRC_DIR) -DGIT_VERSION=\"$(GIT_VERSION)\"
 LDLIBS :=
 
+MIPS_AS := clang -target mipsel-unknown-linux-gnu -mabi=32 -march=mips32 -mno-abicalls -fno-pic -c
+MIPS_LD := ld.lld -m elf32ltsmip -static -e __start
+
 TEST_SRCS := $(sort $(wildcard cobol-exemplos/*.cob) $(wildcard exemplos/*.cbl))
 
-.PHONY: all test test-parse test-lex clean help
+.PHONY: all test test-mips test-sema test-parse test-lex clean help
 
 all: $(BIN)
 
@@ -38,16 +41,34 @@ $(BIN): $(OBJS)
 %.o: %.c $(YACC_HDR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-test: $(BIN)
+test: test-mips
+
+test-mips: $(BIN)
+	@pass=0; fail=0; tmp=$$(mktemp -d); \
+	for f in $(TEST_SRCS); do \
+		base=$$(basename "$$f"); \
+		if ./$(BIN) "$$f" -o "$$tmp/$$base.s" 2>/dev/null && \
+		   $(MIPS_AS) "$$tmp/$$base.s" -o "$$tmp/$$base.o" 2>/dev/null && \
+		   $(MIPS_LD) "$$tmp/$$base.o" -o "$$tmp/$$base.elf" 2>/dev/null; then \
+			printf "  [ OK ]  %s  (mipsel ELF)\n" "$$f"; pass=$$((pass+1)); \
+		else \
+			printf "  [FAIL]  %s\n" "$$f"; fail=$$((fail+1)); \
+		fi; \
+	done; \
+	rm -rf "$$tmp"; \
+	echo ""; echo "mips passed: $$pass  failed: $$fail"; \
+	[ $$fail -eq 0 ]
+
+test-sema: $(BIN)
 	@pass=0; fail=0; \
 	for f in $(TEST_SRCS); do \
-		if ./$(BIN) "$$f" >/dev/null 2>&1; then \
+		if ./$(BIN) -s "$$f" >/dev/null 2>&1; then \
 			printf "  [ OK ]  %s\n" "$$f"; pass=$$((pass+1)); \
 		else \
 			printf "  [FAIL]  %s\n" "$$f"; fail=$$((fail+1)); \
 		fi; \
 	done; \
-	echo ""; echo "passed: $$pass  failed: $$fail"; \
+	echo ""; echo "sema passed: $$pass  failed: $$fail"; \
 	[ $$fail -eq 0 ]
 
 test-parse: $(BIN)
@@ -80,7 +101,9 @@ clean:
 help:
 	@echo "Available targets:"
 	@echo "  all        - Build compiler (default)"
-	@echo "  test       - Run lex + parse + semantic analysis on cobol-exemplos/*.cob and exemplos/*.cbl"
+	@echo "  test       - Compile, assemble and link all test programs to MIPS32 ELF (alias: test-mips)"
+	@echo "  test-mips  - Run full pipeline + clang/ld.lld MIPS32 ELF build on test programs"
+	@echo "  test-sema  - Run lex + parse + semantic analysis (-s) on test programs"
 	@echo "  test-parse - Run lex + parse only (-p) on test programs"
 	@echo "  test-lex   - Run lexer only (-l) on test programs"
 	@echo "  clean      - Remove build artifacts"

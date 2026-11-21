@@ -132,8 +132,12 @@ static ASTNode *bin_node(ASTKind k, const char *op, ASTNode *a, ASTNode *b) {
 %type <node> search_when_list search_when call_args call_arg
 %type <node> opt_else opt_size_handlers opt_not_size_error opt_read_handlers opt_not_at_end opt_io_handlers opt_not_invalid_key opt_overflow_handlers opt_not_overflow opt_call_handlers
 %type <node> opt_indexed_by opt_giving opt_remainder opt_into opt_from opt_call_using opt_thru opt_search_at_end opt_search_varying
+%type <node> opt_init_replacing init_repl_list init_repl_item inspect_tally_list inspect_tally_item inspect_for_list inspect_for_item inspect_repl_list inspect_repl_item inspect_ba_list
+%type <node> string_delim opt_pointer opt_unstring_delim opt_tallying
+%type <str>  init_category org_type before_or_after opt_accept_fmt
+%type <ival> opt_no_advancing opt_rounded opt_line
 %type <node> value_literal value_item value_list subscript_list
-%type <str>  ident_word proc_name func_name relop relop_core class_type
+%type <str>  ident_word proc_name func_name relop relop_core class_type into_or_by
 
 %%
 
@@ -313,7 +317,10 @@ select_clause
           $$ = c;
       }
     | KW_ORGANIZATION opt_is opt_line org_type
-      { $$ = ast_new(AST_CLAUSE, "ORGANIZATION", g_last_tok.seq_num, g_last_tok.column); }
+      {
+          $$ = ast_new_ex(AST_CLAUSE, "ORGANIZATION", $4, $3, g_last_tok.seq_num, g_last_tok.column);
+          free($4);
+      }
     | KW_ACCESS opt_mode opt_is access_type
       { $$ = ast_new(AST_CLAUSE, "ACCESS", g_last_tok.seq_num, g_last_tok.column); }
     | KW_RECORD KW_KEY opt_is data_ref
@@ -344,13 +351,17 @@ select_clause
 
 opt_to: /* empty */ | KW_TO ;
 opt_is: /* empty */ | KW_IS | KW_ARE ;
-opt_line: /* empty */ | KW_LINE ;
+opt_line: /* empty */ { $$ = 0; } | KW_LINE { $$ = 1; } ;
 opt_mode: /* empty */ | KW_MODE ;
 opt_file: /* empty */ | KW_FILE ;
 opt_with_duplicates: /* empty */ | opt_with KW_DUPLICATES ;
 opt_with: /* empty */ | KW_WITH ;
 
-org_type: KW_SEQUENTIAL | KW_INDEXED | KW_RELATIVE ;
+org_type
+    : KW_SEQUENTIAL { $$ = strdup("SEQUENTIAL"); }
+    | KW_INDEXED    { $$ = strdup("INDEXED"); }
+    | KW_RELATIVE   { $$ = strdup("RELATIVE"); }
+    ;
 access_type: KW_SEQUENTIAL | KW_DYNAMIC | KW_RANDOM ;
 
 /* =========================================================================
@@ -694,7 +705,7 @@ stmt
 stmt_display
     : KW_DISPLAY display_items opt_upon opt_no_advancing opt_end_display
       {
-          ASTNode *d = ast_new(AST_STMT_DISPLAY, NULL, g_last_tok.seq_num, g_last_tok.column);
+          ASTNode *d = ast_new_ex(AST_STMT_DISPLAY, NULL, NULL, $4, g_last_tok.seq_num, g_last_tok.column);
           ast_adopt_children(d, $2);
           $$ = d;
       }
@@ -728,8 +739,8 @@ opt_upon
     ;
 
 opt_no_advancing
-    : /* empty */
-    | opt_with KW_NO KW_ADVANCING
+    : /* empty */               { $$ = 0; }
+    | opt_with KW_NO KW_ADVANCING { $$ = 1; }
     ;
 
 opt_end_display
@@ -739,22 +750,24 @@ opt_end_display
 
 /* --- ACCEPT --- */
 stmt_accept
-    : KW_ACCEPT data_ref opt_accept_from opt_end_accept
+    : KW_ACCEPT data_ref opt_end_accept
       {
           ASTNode *a = ast_new(AST_STMT_ACCEPT, NULL, g_last_tok.seq_num, g_last_tok.column);
           ast_add(a, $2);
           $$ = a;
       }
-    ;
-
-opt_accept_from
-    : /* empty */
-    | KW_FROM ident_word opt_accept_fmt { free($2); }
+    | KW_ACCEPT data_ref KW_FROM ident_word opt_accept_fmt opt_end_accept
+      {
+          ASTNode *a = ast_new_ex(AST_STMT_ACCEPT, $4, $5, 0, g_last_tok.seq_num, g_last_tok.column);
+          free($4); free($5);
+          ast_add(a, $2);
+          $$ = a;
+      }
     ;
 
 opt_accept_fmt
-    : /* empty */
-    | ident_word { free($1); }
+    : /* empty */ { $$ = NULL; }
+    | ident_word  { $$ = $1; }
     ;
 
 opt_end_accept
@@ -827,13 +840,17 @@ stmt_multiply
 stmt_divide
     : KW_DIVIDE rvalue into_or_by add_target_list opt_giving opt_remainder opt_size_handlers opt_end_divide
       {
-          ASTNode *n = ast_new(AST_STMT_DIVIDE, NULL, g_last_tok.seq_num, g_last_tok.column);
+          ASTNode *n = ast_new(AST_STMT_DIVIDE, $3, g_last_tok.seq_num, g_last_tok.column);
+          free($3);
           ast_add(n, $2); ast_add(n, $4); ast_add(n, $5); ast_add(n, $6); ast_add(n, $7);
           $$ = n;
       }
     ;
 
-into_or_by: KW_INTO | KW_BY ;
+into_or_by
+    : KW_INTO { $$ = strdup("INTO"); }
+    | KW_BY   { $$ = strdup("BY"); }
+    ;
 
 stmt_compute
     : KW_COMPUTE add_target_list eq_or_equal arith_expr opt_size_handlers opt_end_compute
@@ -852,10 +869,10 @@ add_target_list
     ;
 
 add_target
-    : rvalue opt_rounded { $$ = $1; }
+    : rvalue opt_rounded { if ($1 && $2) $1->ival = 1; $$ = $1; }
     ;
 
-opt_rounded: /* empty */ | KW_ROUNDED ;
+opt_rounded: /* empty */ { $$ = 0; } | KW_ROUNDED { $$ = 1; } ;
 opt_giving
     : /* empty */ { $$ = NULL; }
     | KW_GIVING add_target_list
@@ -1075,10 +1092,13 @@ perform_ctrl
 
 opt_with_test
     : /* empty */
-    | opt_with KW_TEST before_or_after
+    | opt_with KW_TEST before_or_after { free($3); }
     ;
 
-before_or_after: KW_BEFORE | KW_AFTER ;
+before_or_after
+    : KW_BEFORE { $$ = strdup("BEFORE"); }
+    | KW_AFTER  { $$ = strdup("AFTER"); }
+    ;
 
 perform_after_list
     : /* empty */ { $$ = ast_new(AST_LIST, NULL, 0, 0); }
@@ -1244,7 +1264,7 @@ opt_from
     ;
 opt_write_adv
     : /* empty */
-    | before_or_after opt_advancing adv_target
+    | before_or_after opt_advancing adv_target { free($1); }
     ;
 opt_advancing: /* empty */ | KW_ADVANCING ;
 adv_target
@@ -1389,25 +1409,36 @@ stmt_initialize
       {
           ASTNode *n = ast_new(AST_STMT_INITIALIZE, NULL, g_last_tok.seq_num, g_last_tok.column);
           ast_adopt_children(n, $2);
+          if ($3) ast_adopt_children(n, $3);
           $$ = n;
       }
     ;
 
 opt_init_replacing
-    : /* empty */
-    | KW_REPLACING init_repl_list
+    : /* empty */              { $$ = NULL; }
+    | KW_REPLACING init_repl_list { $$ = $2; }
     ;
 
 init_repl_list
-    : init_repl_item
-    | init_repl_list init_repl_item
+    : init_repl_item                 { $$ = ast_add(ast_new(AST_LIST, NULL, 0, 0), $1); }
+    | init_repl_list init_repl_item  { $$ = ast_add($1, $2); }
     ;
 
 init_repl_item
-    : init_category opt_data KW_BY rvalue { ast_free($4); }
+    : init_category opt_data KW_BY rvalue
+      {
+          ASTNode *c = ast_new_ex(AST_CLAUSE, "REPLACING", $1, 0, g_last_tok.seq_num, g_last_tok.column);
+          free($1);
+          ast_add(c, $4);
+          $$ = c;
+      }
     ;
 
-init_category: KW_ALPHABETIC | KW_ALPHANUMERIC | KW_NUMERIC ;
+init_category
+    : KW_ALPHABETIC   { $$ = strdup("ALPHABETIC"); }
+    | KW_ALPHANUMERIC { $$ = strdup("ALPHANUMERIC"); }
+    | KW_NUMERIC      { $$ = strdup("NUMERIC"); }
+    ;
 opt_data: /* empty */ | KW_DATA ;
 
 /* --- INSPECT --- */
@@ -1428,52 +1459,108 @@ inspect_clauses
 
 inspect_clause
     : KW_TALLYING inspect_tally_list
-      { $$ = ast_new(AST_CLAUSE, "TALLYING", g_last_tok.seq_num, g_last_tok.column); }
+      {
+          ASTNode *c = ast_new(AST_CLAUSE, "TALLYING", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(c, $2);
+          $$ = c;
+      }
     | KW_REPLACING inspect_repl_list
-      { $$ = ast_new(AST_CLAUSE, "REPLACING", g_last_tok.seq_num, g_last_tok.column); }
+      {
+          ASTNode *c = ast_new(AST_CLAUSE, "REPLACING", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(c, $2);
+          $$ = c;
+      }
     | KW_CONVERTING rvalue KW_TO rvalue inspect_ba_list
       {
           ASTNode *c = ast_new(AST_CLAUSE, "CONVERTING", g_last_tok.seq_num, g_last_tok.column);
           ast_add(c, $2); ast_add(c, $4);
+          ast_adopt_children(c, $5);
           $$ = c;
       }
     ;
 
 inspect_tally_list
-    : inspect_tally_item
-    | inspect_tally_list inspect_tally_item
+    : inspect_tally_item                    { $$ = ast_add(ast_new(AST_LIST, NULL, 0, 0), $1); }
+    | inspect_tally_list inspect_tally_item { $$ = ast_add($1, $2); }
     ;
 
 inspect_tally_item
-    : data_ref KW_FOR inspect_for_list { ast_free($1); }
+    : data_ref KW_FOR inspect_for_list
+      {
+          ASTNode *t = ast_new(AST_CLAUSE, "TALLY-ITEM", $1->seq_num, $1->col);
+          ast_add(t, $1);
+          ast_adopt_children(t, $3);
+          $$ = t;
+      }
     ;
 
 inspect_for_list
-    : inspect_for_item
-    | inspect_for_list inspect_for_item
+    : inspect_for_item                  { $$ = ast_add(ast_new(AST_LIST, NULL, 0, 0), $1); }
+    | inspect_for_list inspect_for_item { $$ = ast_add($1, $2); }
     ;
 
 inspect_for_item
     : KW_CHARACTERS inspect_ba_list
-    | KW_ALL rvalue inspect_ba_list     { ast_free($2); }
-    | KW_LEADING rvalue inspect_ba_list { ast_free($2); }
+      {
+          ASTNode *f = ast_new(AST_CLAUSE, "FOR-CHARACTERS", g_last_tok.seq_num, g_last_tok.column);
+          ast_adopt_children(f, $2);
+          $$ = f;
+      }
+    | KW_ALL rvalue inspect_ba_list
+      {
+          ASTNode *f = ast_new(AST_CLAUSE, "FOR-ALL", g_last_tok.seq_num, g_last_tok.column);
+          ast_add(f, $2); ast_adopt_children(f, $3);
+          $$ = f;
+      }
+    | KW_LEADING rvalue inspect_ba_list
+      {
+          ASTNode *f = ast_new(AST_CLAUSE, "FOR-LEADING", g_last_tok.seq_num, g_last_tok.column);
+          ast_add(f, $2); ast_adopt_children(f, $3);
+          $$ = f;
+      }
     ;
 
 inspect_repl_list
-    : inspect_repl_item
-    | inspect_repl_list inspect_repl_item
+    : inspect_repl_item                   { $$ = ast_add(ast_new(AST_LIST, NULL, 0, 0), $1); }
+    | inspect_repl_list inspect_repl_item { $$ = ast_add($1, $2); }
     ;
 
 inspect_repl_item
-    : KW_CHARACTERS KW_BY rvalue inspect_ba_list        { ast_free($3); }
-    | KW_ALL rvalue KW_BY rvalue inspect_ba_list        { ast_free($2); ast_free($4); }
-    | KW_LEADING rvalue KW_BY rvalue inspect_ba_list    { ast_free($2); ast_free($4); }
-    | KW_FIRST rvalue KW_BY rvalue inspect_ba_list      { ast_free($2); ast_free($4); }
+    : KW_CHARACTERS KW_BY rvalue inspect_ba_list
+      {
+          ASTNode *r = ast_new(AST_CLAUSE, "REPL-CHARACTERS", g_last_tok.seq_num, g_last_tok.column);
+          ast_add(r, $3); ast_adopt_children(r, $4);
+          $$ = r;
+      }
+    | KW_ALL rvalue KW_BY rvalue inspect_ba_list
+      {
+          ASTNode *r = ast_new(AST_CLAUSE, "REPL-ALL", g_last_tok.seq_num, g_last_tok.column);
+          ast_add(r, $2); ast_add(r, $4); ast_adopt_children(r, $5);
+          $$ = r;
+      }
+    | KW_LEADING rvalue KW_BY rvalue inspect_ba_list
+      {
+          ASTNode *r = ast_new(AST_CLAUSE, "REPL-LEADING", g_last_tok.seq_num, g_last_tok.column);
+          ast_add(r, $2); ast_add(r, $4); ast_adopt_children(r, $5);
+          $$ = r;
+      }
+    | KW_FIRST rvalue KW_BY rvalue inspect_ba_list
+      {
+          ASTNode *r = ast_new(AST_CLAUSE, "REPL-FIRST", g_last_tok.seq_num, g_last_tok.column);
+          ast_add(r, $2); ast_add(r, $4); ast_adopt_children(r, $5);
+          $$ = r;
+      }
     ;
 
 inspect_ba_list
-    : /* empty */
-    | inspect_ba_list before_or_after opt_initial rvalue { ast_free($4); }
+    : /* empty */ { $$ = ast_new(AST_LIST, NULL, 0, 0); }
+    | inspect_ba_list before_or_after opt_initial rvalue
+      {
+          ASTNode *ba = ast_new(AST_CLAUSE, $2, g_last_tok.seq_num, g_last_tok.column);
+          free($2);
+          ast_add(ba, $4);
+          $$ = ast_add($1, ba);
+      }
     ;
 
 opt_initial: /* empty */ | KW_INITIAL ;
@@ -1483,8 +1570,9 @@ stmt_string
     : KW_STRING string_parts KW_INTO data_ref opt_pointer opt_overflow_handlers opt_end_string
       {
           ASTNode *s = ast_new(AST_STMT_STRING, NULL, g_last_tok.seq_num, g_last_tok.column);
-          ast_adopt_children(s, $2);
+          ast_add(s, $2);
           ast_add(s, $4);
+          ast_add(s, $5);
           ast_add(s, $6);
           $$ = s;
       }
@@ -1497,15 +1585,24 @@ string_parts
 
 string_part
     : rvalue_list KW_DELIMITED opt_by string_delim
-      { $$ = $1; }
+      {
+          ASTNode *p = ast_new(AST_CLAUSE, "STRING-PART", g_last_tok.seq_num, g_last_tok.column);
+          ast_add(p, $1);
+          ast_add(p, $4);
+          $$ = p;
+      }
     ;
 
 string_delim
-    : KW_SIZE
-    | rvalue { ast_free($1); }
+    : KW_SIZE { $$ = ast_new(AST_CLAUSE, "DELIM-SIZE", g_last_tok.seq_num, g_last_tok.column); }
+    | rvalue  { $$ = $1; }
     ;
 
-opt_pointer: /* empty */ | opt_with KW_POINTER data_ref { ast_free($3); } ;
+opt_pointer
+    : /* empty */ { $$ = NULL; }
+    | opt_with KW_POINTER data_ref
+      { ASTNode *p = ast_new(AST_CLAUSE, "POINTER", $3->seq_num, $3->col); ast_add(p, $3); $$ = p; }
+    ;
 
 opt_overflow_handlers
     : /* empty */ %prec LOWER_THAN_HANDLER { $$ = NULL; }
@@ -1532,15 +1629,19 @@ stmt_unstring
       {
           ASTNode *u = ast_new(AST_STMT_UNSTRING, NULL, g_last_tok.seq_num, g_last_tok.column);
           ast_add(u, $2);
-          ast_adopt_children(u, $5);
+          ast_add(u, $3);
+          ast_add(u, $5);
+          ast_add(u, $6);
+          ast_add(u, $7);
           ast_add(u, $8);
           $$ = u;
       }
     ;
 
 opt_unstring_delim
-    : /* empty */
-    | KW_DELIMITED opt_by opt_all rvalue unstring_or_delims { ast_free($4); }
+    : /* empty */ { $$ = NULL; }
+    | KW_DELIMITED opt_by opt_all rvalue unstring_or_delims
+      { ASTNode *d = ast_new(AST_CLAUSE, "UNSTRING-DELIM", $4->seq_num, $4->col); ast_add(d, $4); $$ = d; }
     ;
 
 opt_all: /* empty */ | KW_ALL ;
@@ -1562,7 +1663,11 @@ unstring_target
 opt_delim_in: /* empty */ | KW_DELIMITER opt_in data_ref { ast_free($3); } ;
 opt_count_in: /* empty */ | KW_COUNT opt_in data_ref { ast_free($3); } ;
 opt_in: /* empty */ | KW_IN ;
-opt_tallying: /* empty */ | KW_TALLYING opt_in data_ref { ast_free($3); } ;
+opt_tallying
+    : /* empty */ { $$ = NULL; }
+    | KW_TALLYING opt_in data_ref
+      { ASTNode *t = ast_new(AST_CLAUSE, "TALLYING", $3->seq_num, $3->col); ast_add(t, $3); $$ = t; }
+    ;
 opt_end_unstring: /* empty */ %prec LOWER_THAN_HANDLER | KW_END_UNSTRING ;
 
 /* --- SET / SEARCH / SORT / RELEASE / RETURN --- */

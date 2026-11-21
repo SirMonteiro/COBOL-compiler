@@ -9,6 +9,7 @@
 #include "parser.h"
 #include "ast.h"
 #include "sema.h"
+#include "codegen.h"
 
 #ifndef GIT_VERSION
 #define GIT_VERSION "unknown"
@@ -18,7 +19,7 @@
 
 void print_help(const char *prog_name) {
     printf("Usage: %s [options] file...\n", prog_name);
-    printf("A WIP COBOL very simple compiler\n\n");
+    printf("A COBOL compiler targeting generic MIPS32 assembly\n\n");
     printf("Options:\n");
     printf("  -h, --help            Display this information.\n");
     printf("  -v, --version         Display compiler version information.\n");
@@ -26,10 +27,12 @@ void print_help(const char *prog_name) {
     printf("  -d, --debug           Add debugging lines in compilation.\n");
     printf("  -c, --comment         Display comments.\n");
     printf("  -l, --lex             Run lexical analysis only and print tokens.\n");
-    printf("  -p, --parse           Stop after syntax analysis (skip semantic checks).\n");
+    printf("  -p, --parse           Stop after syntax analysis (skip semantic/codegen).\n");
     printf("  -a, --ast             Print the abstract syntax tree after parsing.\n");
-    printf("  -s, --symtab          Print the symbol table after semantic analysis.\n");
-    printf("  -I <dir>, --include   Add copybook search directory for COPY.\n");
+    printf("  -s, --symtab          Print the symbol table and stop after semantic analysis.\n");
+    printf("  -S, --mips            Emit MIPS32 assembly (default when no analysis-only flag is set).\n");
+    printf("  -t <abi>, --target    MIPS target ABI: linux (default, MIPS32 o32 ELF) or mars (MARS/SPIM).\n");
+    printf("  -I <dir>, --include   Add copybook/subprogram search directory.\n");
 }
 
 int main(int argc, char **argv) {
@@ -45,6 +48,8 @@ int main(int argc, char **argv) {
     bool parse_only = false;
     bool dump_ast = false;
     bool dump_symtab = false;
+    bool force_mips = false;
+    MipsTarget target = MIPS_TARGET_LINUX;
     const char *copy_dirs[MAX_COPY_DIRS];
     int n_copy_dirs = 0;
 
@@ -58,11 +63,13 @@ int main(int argc, char **argv) {
         {"parse",   no_argument,        0, 'p'},
         {"ast",     no_argument,        0, 'a'},
         {"symtab",  no_argument,        0, 's'},
+        {"mips",    no_argument,        0, 'S'},
+        {"target",  required_argument,  0, 't'},
         {"include", required_argument,  0, 'I'},
         {0,         0,                  0,  0}
     };
 
-    while ((opt = getopt_long(argc, argv, "hvo:dclpasI:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hvo:dclpasSt:I:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_help(argv[0]);
@@ -91,6 +98,19 @@ int main(int argc, char **argv) {
             case 's':
                 dump_symtab = true;
                 break;
+            case 'S':
+                force_mips = true;
+                break;
+            case 't':
+                if (strcmp(optarg, "linux") == 0) {
+                    target = MIPS_TARGET_LINUX;
+                } else if (strcmp(optarg, "mars") == 0) {
+                    target = MIPS_TARGET_MARS;
+                } else {
+                    fprintf(stderr, "[S] ERROR: Unknown MIPS target \"%s\" (use linux or mars).\n", optarg);
+                    exit(EXIT_FAILURE);
+                }
+                break;
             case 'I':
                 if (n_copy_dirs < MAX_COPY_DIRS) {
                     copy_dirs[n_copy_dirs++] = optarg;
@@ -106,6 +126,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "[S] ERROR - No input file provided.\n");
         exit(EXIT_FAILURE);
     }
+
+    bool emit_mips = force_mips || (!lex_only && !parse_only && !dump_ast && !dump_symtab);
 
     FILE *out = stdout;
     if (output_file) {
@@ -162,6 +184,17 @@ int main(int argc, char **argv) {
                     }
                     if (!sema_ok) {
                         status = EXIT_FAILURE;
+                    } else if (emit_mips) {
+                        CodegenOpts cg = {
+                            .target = target,
+                            .lex_opts = &opts,
+                            .input_path = input_path,
+                            .copy_dirs = copy_dirs,
+                            .n_copy_dirs = n_copy_dirs
+                        };
+                        if (!codegen_mips(root, &tab, &cg, out)) {
+                            status = EXIT_FAILURE;
+                        }
                     }
                     symtab_free(&tab);
                 }
