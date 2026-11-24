@@ -1,6 +1,6 @@
 # Compilador COBOL (`cbc`) - ACH2087
 
-Compilador COBOL em desenvolvimento para a disciplina [ACH2087 - Construção de Compiladores](https://uspdigital.usp.br/jupiterweb/obterDisciplina?sgldis=ACH2087&codcur=86200&codhab=204) (EACH-USP, 2º semestre de 2026), seguindo [EspecificacaoCOBOL.md](EspecificacaoCOBOL.md).
+Compilador COBOL para a disciplina [ACH2087 - Construção de Compiladores](https://uspdigital.usp.br/jupiterweb/obterDisciplina?sgldis=ACH2087&codcur=86200&codhab=204) (EACH-USP, 2º semestre de 2026), seguindo as especificações passadas em [EspecificacaoCOBOL.md](EspecificacaoCOBOL.md).
 
 Grupo:
 
@@ -8,14 +8,16 @@ Grupo:
 - André Vieira Rocha (12681611)
 - Gabriel Monteiro de Souza (14746450)
 
-Repositório público: https://github.com/SirMonteiro/COBOL-compiler
+Repositório público: [Em markdown](https://github.com/SirMonteiro/COBOL-compiler/blob/main/README.md), [em PDF](https://github.com/SirMonteiro/COBOL-compiler/blob/main/relatorio.pdf)
 
 ## Compilação e uso
 
 ```sh
 make            # compila o binário ./cbc (Flex + Bison + GCC)
-./cbc programa.cbl -o prog.s    # pipeline completo (lex + parse + sema + MIPS32)
-./cbc -t mars programa.cbl -o prog.asm  # gera assembly MIPS32 para MARS/SPIM
+make help       # mostra o menu de ajuda de compilação/teste
+./cbc           # mostra o menu de ajuda dos possíveis argumentos
+./cbc programa.cbl -o prog.s    # pipeline completo (lex + parse + sema + MIPS)
+./cbc -t mars programa.cbl -o prog.asm  # gera assembly MIPS para MARS/SPIM
 ./cbc -l programa.cbl           # executa apenas o lexer e imprime o fluxo de tokens
 ./cbc -p programa.cbl           # executa lexer + parser (sem análise semântica)
 ./cbc -a programa.cbl           # imprime a AST gerada pelo parser
@@ -27,16 +29,14 @@ make test-parse # executa apenas lex + parse (-p) nos 14 programas de teste
 make test-lex   # executa apenas o lexer (-l) nos 14 programas de teste
 ```
 
-Para montar, linkar e executar um binário estático MIPS32 Linux (`mipsel`, sem `libc`):
+Exemplo para montar, linkar e executar um binário estático MIPS3 Linux (`mipsel`, sem `libc`):
 
 ```sh
 ./cbc exemplos/CALCMD01.cbl -o CALCMD01.s
-clang -target mipsel-unknown-linux-gnu -mabi=32 -march=mips32 -mno-abicalls -fno-pic -c CALCMD01.s -o CALCMD01.o
+clang -target mipsel-unknown-linux-gnu -mabi=32 -march=mips3 -mno-abicalls -fno-pic -c CALCMD01.s -o CALCMD01.o
 ld.lld -m elf32ltsmip -static -e __start CALCMD01.o -o CALCMD01
 qemu-mipsel ./CALCMD01
 ```
-
-Para arquiteturas MIPS32 big-endian (`mips`, comuns em roteadores Atheros/Broadcom), basta trocar `-target mipsel-unknown-linux-gnu` e `elf32ltsmip` por `-target mips-unknown-linux-gnu` e `elf32btsmip` usando o mesmo `.s`.
 
 Para gerar a versão em PDF deste relatório na raiz do repositório:
 
@@ -2797,5 +2797,3 @@ CADASTRAR |20/11/2026|00101|Compiladores                            |Aho Ullman 
 EMPRESTAR |20/11/2026|00101|Compiladores                            |Aho Ullman          |N|20/11/2026|
 DEVOLVER  |20/11/2026|00101|Compiladores                            |Aho Ullman          |S|20/11/2026|20/11/2026
 ```
-
-
