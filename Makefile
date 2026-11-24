@@ -21,7 +21,8 @@ RM   := rm
 CXXFLAGS := -O3 -std=c++17 -Wall -Wformat -I$(INC_DIR) -I$(SRC_DIR) -DGIT_VERSION=\"$(GIT_VERSION)\"
 LDLIBS :=
 
-MIPS_AS := clang -target mipsel-unknown-linux-gnu -mabi=32 -march=mips32 -mno-abicalls -fno-pic -c
+MIPS_ARCH ?= mips3
+MIPS_AS := clang -target mipsel-unknown-linux-gnu -mabi=32 -march=$(MIPS_ARCH) -mno-abicalls -fno-pic -c
 MIPS_LD := ld.lld -m elf32ltsmip -static -e __start
 
 TEST_SRCS := $(sort $(wildcard cobol-exemplos/*.cob) $(wildcard exemplos/*.cbl))
