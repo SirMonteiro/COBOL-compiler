@@ -5,19 +5,20 @@ INC_DIR := include
 GIT_VERSION := $(shell git describe --tags --always --dirty)
 
 LEX_SRC  := $(SRC_DIR)/lexer.l
-LEX_GEN  := $(SRC_DIR)/lex.yy.c
+LEX_GEN  := $(SRC_DIR)/lex.yy.cpp
 YACC_SRC := $(SRC_DIR)/parser.y
-YACC_GEN := $(SRC_DIR)/parser.tab.c
-YACC_HDR := $(SRC_DIR)/parser.tab.h
+YACC_GEN := $(SRC_DIR)/parser.tab.cpp
+YACC_HDR := $(SRC_DIR)/parser.tab.hpp
 
-SRCS := $(filter-out $(LEX_GEN) $(YACC_GEN),$(wildcard $(SRC_DIR)/*.c)) $(LEX_GEN) $(YACC_GEN)
-OBJS := $(SRCS:.c=.o)
+C_SRCS   := $(filter-out $(SRC_DIR)/lex.yy.c $(SRC_DIR)/parser.tab.c,$(wildcard $(SRC_DIR)/*.c))
+CPP_SRCS := $(filter-out $(LEX_GEN) $(YACC_GEN),$(wildcard $(SRC_DIR)/*.cpp)) $(LEX_GEN) $(YACC_GEN)
+OBJS     := $(C_SRCS:.c=.o) $(CPP_SRCS:.cpp=.o)
 
-CC   ?= gcc
+CXX  ?= g++
 LEX  := flex
 YACC := bison
 RM   := rm
-CFLAGS := -O3 -Wall -Wformat -I$(INC_DIR) -I$(SRC_DIR) -DGIT_VERSION=\"$(GIT_VERSION)\"
+CXXFLAGS := -O3 -std=c++17 -Wall -Wformat -I$(INC_DIR) -I$(SRC_DIR) -DGIT_VERSION=\"$(GIT_VERSION)\"
 LDLIBS :=
 
 MIPS_AS := clang -target mipsel-unknown-linux-gnu -mabi=32 -march=mips32 -mno-abicalls -fno-pic -c
@@ -36,10 +37,16 @@ $(YACC_GEN) $(YACC_HDR): $(YACC_SRC)
 	$(YACC) -d -o $(YACC_GEN) $(YACC_SRC)
 
 $(BIN): $(OBJS)
-	$(CC) $^ -o $@ $(LDLIBS)
+	$(CXX) $^ -o $@ $(LDLIBS)
+
+$(SRC_DIR)/lex.yy.o: $(LEX_GEN) $(YACC_HDR)
+	$(CXX) $(CXXFLAGS) -Wno-register -c $< -o $@
 
 %.o: %.c $(YACC_HDR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+%.o: %.cpp $(YACC_HDR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 test: test-mips
 
@@ -96,7 +103,8 @@ test-lex: $(BIN)
 	[ $$fail -eq 0 ]
 
 clean:
-	$(RM) -f $(OBJS) $(BIN) $(LEX_GEN) $(YACC_GEN) $(YACC_HDR)
+	$(RM) -f $(OBJS) $(BIN) $(LEX_GEN) $(YACC_GEN) $(YACC_HDR) \
+	         $(SRC_DIR)/*.o $(SRC_DIR)/lex.yy.c $(SRC_DIR)/parser.tab.c $(SRC_DIR)/parser.tab.h
 
 help:
 	@echo "Available targets:"

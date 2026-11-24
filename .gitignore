@@ -2,8 +2,11 @@
 
 cbc
 lex.yy.c
+lex.yy.cpp
 parser.tab.c
+parser.tab.cpp
 parser.tab.h
+parser.tab.hpp
 *.output
 
 ## tmp
