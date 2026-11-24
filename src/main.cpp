@@ -18,7 +18,7 @@
 
 static void print_help(const char *prog_name) {
     std::printf("Usage: %s [options] file...\n", prog_name);
-    std::printf("A COBOL compiler targeting generic MIPS32 assembly\n\n");
+    std::printf("A WIP COBOL very simple compiler targeting MIPS(MARS/MIPS I)\n\n");
     std::printf("Options:\n");
     std::printf("  -h, --help            Display this information.\n");
     std::printf("  -v, --version         Display compiler version information.\n");
@@ -29,9 +29,9 @@ static void print_help(const char *prog_name) {
     std::printf("  -p, --parse           Stop after syntax analysis (skip semantic/codegen).\n");
     std::printf("  -a, --ast             Print the abstract syntax tree after parsing.\n");
     std::printf("  -s, --symtab          Print the symbol table and stop after semantic analysis.\n");
-    std::printf("  -S, --mips            Emit MIPS32 assembly (default when no analysis-only flag is set).\n");
-    std::printf("  -t <abi>, --target    MIPS target ABI: linux (default, MIPS32 o32 ELF) or mars (MARS/SPIM).\n");
-    std::printf("  -I <dir>, --include   Add copybook/subprogram search directory.\n");
+    std::printf("  -S, --mips            Emit MIPS assembly (default when no analysis-only flag is set).\n");
+    std::printf("  -t <abi>, --target    MIPS target ABI: linux (default, MIPS o32 ELF) or mars (MARS/SPIM).\n");
+    std::printf("  -I <dir>, --include   Add copybook/subprogram search directory (also reads COBCPY).\n");
 }
 
 int main(int argc, char **argv) {

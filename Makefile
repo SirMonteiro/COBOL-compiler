@@ -25,7 +25,8 @@ MIPS_ARCH ?= mips3
 MIPS_AS := clang -target mipsel-unknown-linux-gnu -mabi=32 -march=$(MIPS_ARCH) -mno-abicalls -fno-pic -c
 MIPS_LD := ld.lld -m elf32ltsmip -static -e __start
 
-TEST_SRCS := $(sort $(wildcard cobol-exemplos/*.cob) $(wildcard exemplos/*.cbl))
+TEST_SRCS  := $(sort $(wildcard cobol-exemplos/*.cob) $(wildcard exemplos/*.cbl))
+TEST_FLAGS := -I codigo_fonte_cobol
 
 .PHONY: all test test-mips test-sema test-parse test-lex clean help
 
@@ -55,7 +56,7 @@ test-mips: $(BIN)
 	@pass=0; fail=0; tmp=$$(mktemp -d); \
 	for f in $(TEST_SRCS); do \
 		base=$$(basename "$$f"); \
-		if ./$(BIN) "$$f" -o "$$tmp/$$base.s" 2>/dev/null && \
+		if ./$(BIN) $(TEST_FLAGS) "$$f" -o "$$tmp/$$base.s" 2>/dev/null && \
 		   $(MIPS_AS) "$$tmp/$$base.s" -o "$$tmp/$$base.o" 2>/dev/null && \
 		   $(MIPS_LD) "$$tmp/$$base.o" -o "$$tmp/$$base.elf" 2>/dev/null; then \
 			printf "  [ OK ]  %s  (mipsel ELF)\n" "$$f"; pass=$$((pass+1)); \
@@ -70,7 +71,7 @@ test-mips: $(BIN)
 test-sema: $(BIN)
 	@pass=0; fail=0; \
 	for f in $(TEST_SRCS); do \
-		if ./$(BIN) -s "$$f" >/dev/null 2>&1; then \
+		if ./$(BIN) $(TEST_FLAGS) -s "$$f" >/dev/null 2>&1; then \
 			printf "  [ OK ]  %s\n" "$$f"; pass=$$((pass+1)); \
 		else \
 			printf "  [FAIL]  %s\n" "$$f"; fail=$$((fail+1)); \
@@ -82,7 +83,7 @@ test-sema: $(BIN)
 test-parse: $(BIN)
 	@pass=0; fail=0; \
 	for f in $(TEST_SRCS); do \
-		if ./$(BIN) -p "$$f" >/dev/null 2>&1; then \
+		if ./$(BIN) $(TEST_FLAGS) -p "$$f" >/dev/null 2>&1; then \
 			printf "  [ OK ]  %s\n" "$$f"; pass=$$((pass+1)); \
 		else \
 			printf "  [FAIL]  %s\n" "$$f"; fail=$$((fail+1)); \

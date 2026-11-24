@@ -1,8 +1,7 @@
 #include "ast.h"
-#include "util.h"
 
 bool ASTNode::is_clause(const std::string &name) const {
-    return kind == AST_CLAUSE && !text.empty() && ci_eq(text, name);
+    return kind == AST_CLAUSE && text == name;
 }
 
 const ASTNode *ASTNode::find_clause(const std::string &name, size_t start) const {
@@ -114,17 +113,10 @@ ASTNode *ast_add(ASTNode *parent, ASTNode *child) {
 
 ASTNode *ast_adopt_children(ASTNode *parent, ASTNode *list_node) {
     if (!parent || !list_node) return parent;
-    for (size_t i = 0; i < list_node->children.size(); i++) {
-        parent->children.push_back(list_node->children[i]);
-    }
+    for (ASTNode *ch : list_node->children) parent->children.push_back(ch);
     list_node->children.clear();
     delete list_node;
     return parent;
-}
-
-void ast_set_text(ASTNode *node, const char *text) {
-    if (!node) return;
-    node->text = text ? text : "";
 }
 
 void ast_set_extra(ASTNode *node, const char *extra) {
@@ -146,9 +138,7 @@ void ast_print(const ASTNode *node, FILE *out, int indent) {
     if (node->seq_num > 0) std::fprintf(out, " @%d:%d", node->seq_num, node->col);
     std::fputc('\n', out);
 
-    for (size_t i = 0; i < node->children.size(); i++) {
-        ast_print(node->children[i], out, indent + 1);
-    }
+    for (const ASTNode *ch : node->children) ast_print(ch, out, indent + 1);
 }
 
 void ast_free(ASTNode *node) {

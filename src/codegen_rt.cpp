@@ -414,7 +414,7 @@ _rt_ia_no:
     jr   $ra
 )mips";
 
-static const char *const kRtNum = R"mips(
+static const char *const kRtParseNum = R"mips(
 _rt_parse_num:
     addiu $sp, $sp, -24
     sw   $ra, 0($sp)
@@ -498,7 +498,9 @@ _rt_pn_ret:
     lw   $ra, 0($sp)
     addiu $sp, $sp, 24
     jr   $ra
+)mips";
 
+static const char *const kRtFormatNum = R"mips(
 _rt_format_num:
     srl  $t0, $a3, 8
     andi $t1, $a3, 0xFE
@@ -668,7 +670,7 @@ _rt_fe_done:
     jr   $ra
 )mips";
 
-static const char *const kRtArith = R"mips(
+static const char *const kRtMul = R"mips(
 _rt_mul_scaled:
     li   $t0, 1
     bgt  $a2, $t0, _rt_ms_sc
@@ -693,7 +695,9 @@ _rt_ms_sc:
     mflo $t4
     addu $v0, $v0, $t4
     jr   $ra
+)mips";
 
+static const char *const kRtDiv = R"mips(
 _rt_div_scaled:
     beq  $a1, $zero, _rt_ds_zero
     div  $a0, $a1
@@ -728,7 +732,9 @@ _rt_ds_rem:
 _rt_ds_zero:
     li   $v0, 0
     jr   $ra
+)mips";
 
+static const char *const kRtPow = R"mips(
 _rt_pow_scaled:
     addiu $sp, $sp, -16
     sw   $ra, 0($sp)
@@ -1286,9 +1292,10 @@ void codegen_emit_runtime(FILE *out, MipsTarget target, uint32_t m) {
     /* Resolve transitive runtime dependencies */
     m |= RT_EXIT;
     if (m & RT_PRINT_NUM)  m |= RT_PRINT;
-    if (m & RT_ACCEPT)     m |= RT_LINE_IO | RT_MEM | RT_NUM;
+    if (m & RT_POW)        m |= RT_MUL;
+    if (m & RT_ACCEPT)     m |= RT_LINE_IO | RT_MEM | RT_PARSE_NUM | RT_FMT_NUM;
     if (m & RT_BIG_DIGITS) m |= RT_LINE_IO;
-    if (m & RT_DATETIME)   m |= RT_NUM;
+    if (m & RT_DATETIME)   m |= RT_FMT_NUM;
     if (m & RT_PRINT)      m |= RT_WRITE_FD;
     if (m & RT_LINE_IO)    m |= RT_READ_FD | RT_WRITE_FD;
 
@@ -1303,7 +1310,7 @@ void codegen_emit_runtime(FILE *out, MipsTarget target, uint32_t m) {
                            std::fputs("_rt_inbuf:     .space 256\n", out);
     if (m & (RT_LINE_IO | RT_ACCEPT | RT_BIG_DIGITS | RT_OPEN_CLOSE))
                            std::fputs("_rt_linebuf:   .space 512\n", out);
-    if (m & RT_NUM)        std::fputs("_rt_numbuf:    .space 64\n", out);
+    if (m & RT_NUMBUF)     std::fputs("_rt_numbuf:    .space 64\n", out);
     if (m & RT_STR_FUNCS)  std::fputs("_rt_revbuf:    .space 256\n", out);
     if (m & RT_DATETIME)   std::fputs("_rt_datebuf:   .space 32\n", out);
     if (m & RT_RETCODE)    std::fputs("cob_g_retcode: .ascii \"+000000000\"\n", out);
@@ -1312,7 +1319,7 @@ void codegen_emit_runtime(FILE *out, MipsTarget target, uint32_t m) {
     std::fputs("\n# =========================================================================\n", out);
     std::fputs(target == MIPS_TARGET_MARS
                    ? "# Runtime Library (MARS/SPIM syscalls, on-demand modules)\n"
-                   : "# Runtime Library (Linux MIPS32 o32 syscalls, on-demand modules)\n",
+                   : "# Runtime Library (Linux MIPS o32 syscalls, on-demand modules)\n",
                out);
     std::fputs("# =========================================================================\n", out);
 
@@ -1329,9 +1336,12 @@ void codegen_emit_runtime(FILE *out, MipsTarget target, uint32_t m) {
     if (m & RT_CMP_ALNUM)  std::fputs(kRtCmpAlnum, out);
     if (m & RT_CMP_DIGITS) std::fputs(kRtCmpDigits, out);
     if (m & RT_CLASS)      std::fputs(kRtClass, out);
-    if (m & RT_NUM)        std::fputs(kRtNum, out);
+    if (m & RT_PARSE_NUM)  std::fputs(kRtParseNum, out);
+    if (m & RT_FMT_NUM)    std::fputs(kRtFormatNum, out);
     if (m & RT_EDITED)     std::fputs(kRtEdited, out);
-    if (m & RT_ARITH)      std::fputs(kRtArith, out);
+    if (m & RT_MUL)        std::fputs(kRtMul, out);
+    if (m & RT_DIV)        std::fputs(kRtDiv, out);
+    if (m & RT_POW)        std::fputs(kRtPow, out);
     if (m & RT_LINE_IO) {
         std::fputs(kRtLineIoHead, out);
         if (mars) std::fputs(kRtLineIoMarsHook, out);

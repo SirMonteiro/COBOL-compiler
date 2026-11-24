@@ -92,7 +92,7 @@ struct ASTNode {
     std::vector<ASTNode *> children;
 
     ~ASTNode() {
-        for (size_t i = 0; i < children.size(); i++) delete children[i];
+        for (ASTNode *ch : children) delete ch;
     }
 
     bool is_clause(const std::string &name) const;
@@ -106,7 +106,6 @@ ASTNode *ast_new(ASTKind kind, const std::string &text, int seq_num, int col);
 ASTNode *ast_new_ex(ASTKind kind, const char *text, const char *extra, int ival, int seq_num, int col);
 ASTNode *ast_add(ASTNode *parent, ASTNode *child);
 ASTNode *ast_adopt_children(ASTNode *parent, ASTNode *list_node);
-void     ast_set_text(ASTNode *node, const char *text);
 void     ast_set_extra(ASTNode *node, const char *extra);
 
 void     ast_print(const ASTNode *node, FILE *out, int indent);

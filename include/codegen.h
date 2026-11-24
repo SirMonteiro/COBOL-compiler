@@ -11,11 +11,11 @@
 #include "sema.h"
 
 enum MipsTarget {
-    MIPS_TARGET_LINUX = 0, /* Generic MIPS32 o32 Linux ELF (mipsel/mips routers, PS2 Linux, qemu-mipsel) */
+    MIPS_TARGET_LINUX = 0, /* Generic MIPS III / R5900 / MIPS32 o32 Linux ELF */
     MIPS_TARGET_MARS       /* MARS / SPIM simulator syscalls */
 };
 
-/* Bitmask of MIPS32 runtime modules emitted on demand */
+/* Bitmask of MIPS runtime modules emitted on demand */
 enum RtModule : uint32_t {
     RT_NONE       = 0,
     RT_EXIT       = 1u << 0,
@@ -28,18 +28,22 @@ enum RtModule : uint32_t {
     RT_CMP_ALNUM  = 1u << 7,
     RT_CMP_DIGITS = 1u << 8,
     RT_CLASS      = 1u << 9,
-    RT_NUM        = 1u << 10,
-    RT_EDITED     = 1u << 11,
-    RT_ARITH      = 1u << 12,
-    RT_LINE_IO    = 1u << 13,
-    RT_ACCEPT     = 1u << 14,
-    RT_BIG_DIGITS = 1u << 15,
-    RT_STR_FUNCS  = 1u << 16,
-    RT_INSPECT    = 1u << 17,
-    RT_DATETIME   = 1u << 18,
-    RT_PERF       = 1u << 19,
-    RT_RETCODE    = 1u << 20,
-    RT_RNG        = 1u << 21
+    RT_PARSE_NUM  = 1u << 10,
+    RT_FMT_NUM    = 1u << 11,
+    RT_NUMBUF     = 1u << 12,
+    RT_EDITED     = 1u << 13,
+    RT_MUL        = 1u << 14,
+    RT_DIV        = 1u << 15,
+    RT_POW        = 1u << 16,
+    RT_LINE_IO    = 1u << 17,
+    RT_ACCEPT     = 1u << 18,
+    RT_BIG_DIGITS = 1u << 19,
+    RT_STR_FUNCS  = 1u << 20,
+    RT_INSPECT    = 1u << 21,
+    RT_DATETIME   = 1u << 22,
+    RT_PERF       = 1u << 23,
+    RT_RETCODE    = 1u << 24,
+    RT_RNG        = 1u << 25
 };
 
 struct CodegenOpts {
@@ -49,7 +53,7 @@ struct CodegenOpts {
     std::vector<std::string> copy_dirs;
 };
 
-/* Generate generic MIPS32 assembly from a semantically validated AST. */
+/* Generate generic MIPS (MIPS I/III/R5900/MIPS32 o32) assembly from a validated AST. */
 bool codegen_mips(const ASTNode *root, const SymTab &symtab,
                   const CodegenOpts &opts, FILE *out);
 
