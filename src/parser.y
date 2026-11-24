@@ -2,23 +2,26 @@
 %define parse.error verbose
 
 %{
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
+#include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "lexer.h"
 #include "ast.h"
 #include "parser.h"
 
-static const TokenList *g_tokens = NULL;
+static const TokenList *g_tokens = nullptr;
 static size_t           g_pos = 0;
-static const char      *g_filename = NULL;
+static const char      *g_filename = nullptr;
 static int              g_errors = 0;
-static ASTNode         *g_root = NULL;
+static ASTNode         *g_root = nullptr;
 static int              g_in_ident_div = 0;
 static int              g_pending_comment_text = 0;
-static char             g_comment_buf[512];
+static std::string      g_comment_buf;
 static Token            g_last_tok;
 
 static int cob_lex(void);
@@ -144,7 +147,7 @@ static ASTNode *bin_node(ASTKind k, const char *op, ASTNode *a, ASTNode *b) {
 program
     : identification_div opt_environment_div opt_data_div procedure_div opt_end_program
       {
-          ASTNode *prog = ast_new(AST_PROGRAM, $1 ? $1->text : NULL, 1, 8);
+          ASTNode *prog = ast_new(AST_PROGRAM, $1 ? $1->text.c_str() : nullptr, 1, 8);
           ast_add(prog, $1);
           ast_add(prog, $2);
           ast_add(prog, $3);
@@ -2010,224 +2013,204 @@ ident_word
  * TokenList -> Bison Lexer Adapter
  * ========================================================================= */
 
-typedef struct {
-    const char *name;
-    int token;
-} KwMap;
+static const std::unordered_map<std::string, int> &keyword_map() {
+    static const std::unordered_map<std::string, int> table = {
+        {"IDENTIFICATION", KW_IDENTIFICATION}, {"ENVIRONMENT", KW_ENVIRONMENT},
+        {"DATA", KW_DATA}, {"PROCEDURE", KW_PROCEDURE}, {"DIVISION", KW_DIVISION},
+        {"SECTION", KW_SECTION}, {"PROGRAM-ID", KW_PROGRAM_ID},
+        {"CONFIGURATION", KW_CONFIGURATION}, {"SOURCE-COMPUTER", KW_SOURCE_COMPUTER},
+        {"OBJECT-COMPUTER", KW_OBJECT_COMPUTER}, {"SPECIAL-NAMES", KW_SPECIAL_NAMES},
+        {"DECIMAL-POINT", KW_DECIMAL_POINT}, {"COMMA", KW_COMMA},
+        {"INPUT-OUTPUT", KW_INPUT_OUTPUT}, {"FILE-CONTROL", KW_FILE_CONTROL},
+        {"I-O-CONTROL", KW_IO_CONTROL}, {"FILE", KW_FILE},
+        {"WORKING-STORAGE", KW_WORKING_STORAGE}, {"LOCAL-STORAGE", KW_LOCAL_STORAGE},
+        {"LINKAGE", KW_LINKAGE}, {"SCREEN", KW_SCREEN},
 
-static const KwMap kw_table[] = {
-    {"IDENTIFICATION", KW_IDENTIFICATION}, {"ENVIRONMENT", KW_ENVIRONMENT},
-    {"DATA", KW_DATA}, {"PROCEDURE", KW_PROCEDURE}, {"DIVISION", KW_DIVISION},
-    {"SECTION", KW_SECTION}, {"PROGRAM-ID", KW_PROGRAM_ID},
-    {"CONFIGURATION", KW_CONFIGURATION}, {"SOURCE-COMPUTER", KW_SOURCE_COMPUTER},
-    {"OBJECT-COMPUTER", KW_OBJECT_COMPUTER}, {"SPECIAL-NAMES", KW_SPECIAL_NAMES},
-    {"DECIMAL-POINT", KW_DECIMAL_POINT}, {"COMMA", KW_COMMA},
-    {"INPUT-OUTPUT", KW_INPUT_OUTPUT}, {"FILE-CONTROL", KW_FILE_CONTROL},
-    {"I-O-CONTROL", KW_IO_CONTROL}, {"FILE", KW_FILE},
-    {"WORKING-STORAGE", KW_WORKING_STORAGE}, {"LOCAL-STORAGE", KW_LOCAL_STORAGE},
-    {"LINKAGE", KW_LINKAGE}, {"SCREEN", KW_SCREEN},
+        {"SELECT", KW_SELECT}, {"ASSIGN", KW_ASSIGN}, {"OPTIONAL", KW_OPTIONAL},
+        {"ORGANIZATION", KW_ORGANIZATION}, {"LINE", KW_LINE}, {"LINES", KW_LINES},
+        {"PAGE", KW_PAGE}, {"SEQUENTIAL", KW_SEQUENTIAL}, {"INDEXED", KW_INDEXED},
+        {"RELATIVE", KW_RELATIVE}, {"ACCESS", KW_ACCESS}, {"MODE", KW_MODE},
+        {"DYNAMIC", KW_DYNAMIC}, {"RANDOM", KW_RANDOM}, {"RECORD", KW_RECORD},
+        {"RECORDS", KW_RECORDS}, {"KEY", KW_KEY}, {"ALTERNATE", KW_ALTERNATE},
+        {"DUPLICATES", KW_DUPLICATES}, {"STATUS", KW_STATUS},
+        {"FD", KW_FD}, {"SD", KW_SD}, {"BLOCK", KW_BLOCK}, {"CONTAINS", KW_CONTAINS},
+        {"LABEL", KW_LABEL}, {"STANDARD", KW_STANDARD}, {"OMITTED", KW_OMITTED},
+        {"PIC", KW_PIC}, {"PICTURE", KW_PIC},
+        {"VALUE", KW_VALUE}, {"VALUES", KW_VALUE},
+        {"REDEFINES", KW_REDEFINES}, {"OCCURS", KW_OCCURS}, {"TIMES", KW_TIMES},
+        {"DEPENDING", KW_DEPENDING}, {"ASCENDING", KW_ASCENDING}, {"DESCENDING", KW_DESCENDING},
+        {"USAGE", KW_USAGE}, {"COMP", KW_COMP}, {"COMP-1", KW_COMP}, {"COMP-2", KW_COMP},
+        {"COMP-3", KW_COMP}, {"COMP-4", KW_COMP}, {"COMP-5", KW_COMP},
+        {"COMPUTATIONAL", KW_COMP}, {"COMPUTATIONAL-3", KW_COMP},
+        {"BINARY", KW_COMP}, {"PACKED-DECIMAL", KW_COMP},
+        {"SIGN", KW_SIGN}, {"LEADING", KW_LEADING}, {"TRAILING", KW_TRAILING},
+        {"SEPARATE", KW_SEPARATE}, {"CHARACTER", KW_CHARACTER}, {"CHARACTERS", KW_CHARACTERS},
+        {"JUSTIFIED", KW_JUSTIFIED}, {"JUST", KW_JUSTIFIED}, {"RIGHT", KW_RIGHT},
+        {"BLANK", KW_BLANK}, {"SYNC", KW_SYNC}, {"SYNCHRONIZED", KW_SYNC},
+        {"FILLER", KW_FILLER}, {"GLOBAL", KW_GLOBAL}, {"EXTERNAL", KW_EXTERNAL},
+        {"COPY", KW_COPY},
 
-    {"SELECT", KW_SELECT}, {"ASSIGN", KW_ASSIGN}, {"OPTIONAL", KW_OPTIONAL},
-    {"ORGANIZATION", KW_ORGANIZATION}, {"LINE", KW_LINE}, {"LINES", KW_LINES},
-    {"PAGE", KW_PAGE}, {"SEQUENTIAL", KW_SEQUENTIAL}, {"INDEXED", KW_INDEXED},
-    {"RELATIVE", KW_RELATIVE}, {"ACCESS", KW_ACCESS}, {"MODE", KW_MODE},
-    {"DYNAMIC", KW_DYNAMIC}, {"RANDOM", KW_RANDOM}, {"RECORD", KW_RECORD},
-    {"RECORDS", KW_RECORDS}, {"KEY", KW_KEY}, {"ALTERNATE", KW_ALTERNATE},
-    {"DUPLICATES", KW_DUPLICATES}, {"STATUS", KW_STATUS},
-    {"FD", KW_FD}, {"SD", KW_SD}, {"BLOCK", KW_BLOCK}, {"CONTAINS", KW_CONTAINS},
-    {"LABEL", KW_LABEL}, {"STANDARD", KW_STANDARD}, {"OMITTED", KW_OMITTED},
-    {"PIC", KW_PIC}, {"PICTURE", KW_PIC},
-    {"VALUE", KW_VALUE}, {"VALUES", KW_VALUE},
-    {"REDEFINES", KW_REDEFINES}, {"OCCURS", KW_OCCURS}, {"TIMES", KW_TIMES},
-    {"DEPENDING", KW_DEPENDING}, {"ASCENDING", KW_ASCENDING}, {"DESCENDING", KW_DESCENDING},
-    {"USAGE", KW_USAGE}, {"COMP", KW_COMP}, {"COMP-1", KW_COMP}, {"COMP-2", KW_COMP},
-    {"COMP-3", KW_COMP}, {"COMP-4", KW_COMP}, {"COMP-5", KW_COMP},
-    {"COMPUTATIONAL", KW_COMP}, {"COMPUTATIONAL-3", KW_COMP},
-    {"BINARY", KW_COMP}, {"PACKED-DECIMAL", KW_COMP},
-    {"SIGN", KW_SIGN}, {"LEADING", KW_LEADING}, {"TRAILING", KW_TRAILING},
-    {"SEPARATE", KW_SEPARATE}, {"CHARACTER", KW_CHARACTER}, {"CHARACTERS", KW_CHARACTERS},
-    {"JUSTIFIED", KW_JUSTIFIED}, {"JUST", KW_JUSTIFIED}, {"RIGHT", KW_RIGHT},
-    {"BLANK", KW_BLANK}, {"SYNC", KW_SYNC}, {"SYNCHRONIZED", KW_SYNC},
-    {"FILLER", KW_FILLER}, {"GLOBAL", KW_GLOBAL}, {"EXTERNAL", KW_EXTERNAL},
-    {"COPY", KW_COPY},
+        {"DISPLAY", KW_DISPLAY}, {"ACCEPT", KW_ACCEPT}, {"MOVE", KW_MOVE},
+        {"ADD", KW_ADD}, {"SUBTRACT", KW_SUBTRACT}, {"MULTIPLY", KW_MULTIPLY},
+        {"DIVIDE", KW_DIVIDE}, {"COMPUTE", KW_COMPUTE},
+        {"IF", KW_IF}, {"THEN", KW_THEN}, {"ELSE", KW_ELSE}, {"END-IF", KW_END_IF},
+        {"EVALUATE", KW_EVALUATE}, {"WHEN", KW_WHEN}, {"OTHER", KW_OTHER},
+        {"ALSO", KW_ALSO}, {"ANY", KW_ANY}, {"END-EVALUATE", KW_END_EVALUATE},
+        {"PERFORM", KW_PERFORM}, {"UNTIL", KW_UNTIL}, {"VARYING", KW_VARYING},
+        {"AFTER", KW_AFTER}, {"BEFORE", KW_BEFORE}, {"TEST", KW_TEST},
+        {"THRU", KW_THRU}, {"THROUGH", KW_THRU}, {"END-PERFORM", KW_END_PERFORM},
+        {"OPEN", KW_OPEN}, {"CLOSE", KW_CLOSE}, {"READ", KW_READ}, {"WRITE", KW_WRITE},
+        {"REWRITE", KW_REWRITE}, {"DELETE", KW_DELETE}, {"START", KW_START},
+        {"END-READ", KW_END_READ}, {"END-WRITE", KW_END_WRITE},
+        {"END-REWRITE", KW_END_REWRITE}, {"END-DELETE", KW_END_DELETE},
+        {"END-START", KW_END_START},
+        {"GO", KW_GO}, {"ALTER", KW_ALTER}, {"PROCEED", KW_PROCEED}, {"COLUMN", KW_COLUMN},
+        {"CALL", KW_CALL}, {"CANCEL", KW_CANCEL}, {"END-CALL", KW_END_CALL},
+        {"STOP", KW_STOP}, {"RUN", KW_RUN}, {"GOBACK", KW_GOBACK},
+        {"EXIT", KW_EXIT}, {"CONTINUE", KW_CONTINUE}, {"NEXT", KW_NEXT},
+        {"SENTENCE", KW_SENTENCE},
+        {"INITIALIZE", KW_INITIALIZE}, {"INSPECT", KW_INSPECT},
+        {"STRING", KW_STRING}, {"UNSTRING", KW_UNSTRING},
+        {"SET", KW_SET}, {"SEARCH", KW_SEARCH},
+        {"SORT", KW_SORT}, {"MERGE", KW_MERGE}, {"RELEASE", KW_RELEASE}, {"RETURN", KW_RETURN},
+        {"END-ADD", KW_END_ADD}, {"END-SUBTRACT", KW_END_SUBTRACT},
+        {"END-MULTIPLY", KW_END_MULTIPLY}, {"END-DIVIDE", KW_END_DIVIDE},
+        {"END-COMPUTE", KW_END_COMPUTE}, {"END-STRING", KW_END_STRING},
+        {"END-UNSTRING", KW_END_UNSTRING}, {"END-SEARCH", KW_END_SEARCH},
+        {"END-RETURN", KW_END_RETURN}, {"END-ACCEPT", KW_END_ACCEPT},
+        {"END-DISPLAY", KW_END_DISPLAY},
 
-    {"DISPLAY", KW_DISPLAY}, {"ACCEPT", KW_ACCEPT}, {"MOVE", KW_MOVE},
-    {"ADD", KW_ADD}, {"SUBTRACT", KW_SUBTRACT}, {"MULTIPLY", KW_MULTIPLY},
-    {"DIVIDE", KW_DIVIDE}, {"COMPUTE", KW_COMPUTE},
-    {"IF", KW_IF}, {"THEN", KW_THEN}, {"ELSE", KW_ELSE}, {"END-IF", KW_END_IF},
-    {"EVALUATE", KW_EVALUATE}, {"WHEN", KW_WHEN}, {"OTHER", KW_OTHER},
-    {"ALSO", KW_ALSO}, {"ANY", KW_ANY}, {"END-EVALUATE", KW_END_EVALUATE},
-    {"PERFORM", KW_PERFORM}, {"UNTIL", KW_UNTIL}, {"VARYING", KW_VARYING},
-    {"AFTER", KW_AFTER}, {"BEFORE", KW_BEFORE}, {"TEST", KW_TEST},
-    {"THRU", KW_THRU}, {"THROUGH", KW_THRU}, {"END-PERFORM", KW_END_PERFORM},
-    {"OPEN", KW_OPEN}, {"CLOSE", KW_CLOSE}, {"READ", KW_READ}, {"WRITE", KW_WRITE},
-    {"REWRITE", KW_REWRITE}, {"DELETE", KW_DELETE}, {"START", KW_START},
-    {"END-READ", KW_END_READ}, {"END-WRITE", KW_END_WRITE},
-    {"END-REWRITE", KW_END_REWRITE}, {"END-DELETE", KW_END_DELETE},
-    {"END-START", KW_END_START},
-    {"GO", KW_GO}, {"ALTER", KW_ALTER}, {"PROCEED", KW_PROCEED}, {"COLUMN", KW_COLUMN},
-    {"CALL", KW_CALL}, {"CANCEL", KW_CANCEL}, {"END-CALL", KW_END_CALL},
-    {"STOP", KW_STOP}, {"RUN", KW_RUN}, {"GOBACK", KW_GOBACK},
-    {"EXIT", KW_EXIT}, {"CONTINUE", KW_CONTINUE}, {"NEXT", KW_NEXT},
-    {"SENTENCE", KW_SENTENCE},
-    {"INITIALIZE", KW_INITIALIZE}, {"INSPECT", KW_INSPECT},
-    {"STRING", KW_STRING}, {"UNSTRING", KW_UNSTRING},
-    {"SET", KW_SET}, {"SEARCH", KW_SEARCH},
-    {"SORT", KW_SORT}, {"MERGE", KW_MERGE}, {"RELEASE", KW_RELEASE}, {"RETURN", KW_RETURN},
-    {"END-ADD", KW_END_ADD}, {"END-SUBTRACT", KW_END_SUBTRACT},
-    {"END-MULTIPLY", KW_END_MULTIPLY}, {"END-DIVIDE", KW_END_DIVIDE},
-    {"END-COMPUTE", KW_END_COMPUTE}, {"END-STRING", KW_END_STRING},
-    {"END-UNSTRING", KW_END_UNSTRING}, {"END-SEARCH", KW_END_SEARCH},
-    {"END-RETURN", KW_END_RETURN}, {"END-ACCEPT", KW_END_ACCEPT},
-    {"END-DISPLAY", KW_END_DISPLAY},
-
-    {"TO", KW_TO}, {"FROM", KW_FROM}, {"BY", KW_BY}, {"INTO", KW_INTO},
-    {"GIVING", KW_GIVING}, {"REMAINDER", KW_REMAINDER}, {"OF", KW_OF}, {"IN", KW_IN},
-    {"INPUT", KW_INPUT}, {"OUTPUT", KW_OUTPUT}, {"I-O", KW_IO}, {"EXTEND", KW_EXTEND},
-    {"AT", KW_AT}, {"END", KW_END}, {"NOT", KW_NOT}, {"INVALID", KW_INVALID},
-    {"ON", KW_ON}, {"SIZE", KW_SIZE}, {"ERROR", KW_ERROR},
-    {"OVERFLOW", KW_OVERFLOW}, {"EXCEPTION", KW_EXCEPTION},
-    {"AND", KW_AND}, {"OR", KW_OR},
-    {"EQUAL", KW_EQUAL}, {"EQUALS", KW_EQUAL},
-    {"GREATER", KW_GREATER}, {"LESS", KW_LESS}, {"THAN", KW_THAN},
-    {"IS", KW_IS}, {"ARE", KW_ARE}, {"TRUE", KW_TRUE}, {"FALSE", KW_FALSE},
-    {"DELIMITED", KW_DELIMITED}, {"DELIMITER", KW_DELIMITER},
-    {"TALLYING", KW_TALLYING}, {"REPLACING", KW_REPLACING},
-    {"CONVERTING", KW_CONVERTING}, {"FOR", KW_FOR}, {"ALL", KW_ALL},
-    {"FIRST", KW_FIRST}, {"INITIAL", KW_INITIAL}, {"COUNT", KW_COUNT},
-    {"POINTER", KW_POINTER}, {"WITH", KW_WITH}, {"POSITION", KW_POSITION},
-    {"ADVANCING", KW_ADVANCING}, {"NO", KW_NO}, {"UPON", KW_UPON},
-    {"EOP", KW_EOP}, {"END-OF-PAGE", KW_EOP},
-    {"USING", KW_USING}, {"RETURNING", KW_RETURNING},
-    {"REFERENCE", KW_REFERENCE}, {"CONTENT", KW_CONTENT},
-    {"ROUNDED", KW_ROUNDED}, {"CORRESPONDING", KW_CORRESPONDING}, {"CORR", KW_CORRESPONDING},
-    {"NUMERIC", KW_NUMERIC}, {"ALPHABETIC", KW_ALPHABETIC},
-    {"ALPHABETIC-LOWER", KW_ALPHABETIC}, {"ALPHABETIC-UPPER", KW_ALPHABETIC},
-    {"ALPHANUMERIC", KW_ALPHANUMERIC},
-    {"POSITIVE", KW_POSITIVE}, {"NEGATIVE", KW_NEGATIVE},
-    {"FUNCTION", KW_FUNCTION}, {"PROGRAM", KW_PROGRAM}, {"PARAGRAPH", KW_PARAGRAPH},
-    {"LENGTH", KW_LENGTH}, {"UP", KW_UP}, {"DOWN", KW_DOWN}, {"CYCLE", KW_CYCLE},
-    {NULL, 0}
-};
-
-static int is_id_comment_header(const char *s) {
-    return strcmp(s, "AUTHOR") == 0 ||
-           strcmp(s, "INSTALLATION") == 0 ||
-           strcmp(s, "DATE-WRITTEN") == 0 ||
-           strcmp(s, "DATE-COMPILED") == 0 ||
-           strcmp(s, "SECURITY") == 0 ||
-           strcmp(s, "REMARKS") == 0;
+        {"TO", KW_TO}, {"FROM", KW_FROM}, {"BY", KW_BY}, {"INTO", KW_INTO},
+        {"GIVING", KW_GIVING}, {"REMAINDER", KW_REMAINDER}, {"OF", KW_OF}, {"IN", KW_IN},
+        {"INPUT", KW_INPUT}, {"OUTPUT", KW_OUTPUT}, {"I-O", KW_IO}, {"EXTEND", KW_EXTEND},
+        {"AT", KW_AT}, {"END", KW_END}, {"NOT", KW_NOT}, {"INVALID", KW_INVALID},
+        {"ON", KW_ON}, {"SIZE", KW_SIZE}, {"ERROR", KW_ERROR},
+        {"OVERFLOW", KW_OVERFLOW}, {"EXCEPTION", KW_EXCEPTION},
+        {"AND", KW_AND}, {"OR", KW_OR},
+        {"EQUAL", KW_EQUAL}, {"EQUALS", KW_EQUAL},
+        {"GREATER", KW_GREATER}, {"LESS", KW_LESS}, {"THAN", KW_THAN},
+        {"IS", KW_IS}, {"ARE", KW_ARE}, {"TRUE", KW_TRUE}, {"FALSE", KW_FALSE},
+        {"DELIMITED", KW_DELIMITED}, {"DELIMITER", KW_DELIMITER},
+        {"TALLYING", KW_TALLYING}, {"REPLACING", KW_REPLACING},
+        {"CONVERTING", KW_CONVERTING}, {"FOR", KW_FOR}, {"ALL", KW_ALL},
+        {"FIRST", KW_FIRST}, {"INITIAL", KW_INITIAL}, {"COUNT", KW_COUNT},
+        {"POINTER", KW_POINTER}, {"WITH", KW_WITH}, {"POSITION", KW_POSITION},
+        {"ADVANCING", KW_ADVANCING}, {"NO", KW_NO}, {"UPON", KW_UPON},
+        {"EOP", KW_EOP}, {"END-OF-PAGE", KW_EOP},
+        {"USING", KW_USING}, {"RETURNING", KW_RETURNING},
+        {"REFERENCE", KW_REFERENCE}, {"CONTENT", KW_CONTENT},
+        {"ROUNDED", KW_ROUNDED}, {"CORRESPONDING", KW_CORRESPONDING}, {"CORR", KW_CORRESPONDING},
+        {"NUMERIC", KW_NUMERIC}, {"ALPHABETIC", KW_ALPHABETIC},
+        {"ALPHABETIC-LOWER", KW_ALPHABETIC}, {"ALPHABETIC-UPPER", KW_ALPHABETIC},
+        {"ALPHANUMERIC", KW_ALPHANUMERIC},
+        {"POSITIVE", KW_POSITIVE}, {"NEGATIVE", KW_NEGATIVE},
+        {"FUNCTION", KW_FUNCTION}, {"PROGRAM", KW_PROGRAM}, {"PARAGRAPH", KW_PARAGRAPH},
+        {"LENGTH", KW_LENGTH}, {"UP", KW_UP}, {"DOWN", KW_DOWN}, {"CYCLE", KW_CYCLE}
+    };
+    return table;
 }
 
-static int is_figurative(const char *s) {
-    return strcmp(s, "SPACE") == 0 || strcmp(s, "SPACES") == 0 ||
-           strcmp(s, "ZERO") == 0 || strcmp(s, "ZEROS") == 0 || strcmp(s, "ZEROES") == 0 ||
-           strcmp(s, "HIGH-VALUE") == 0 || strcmp(s, "HIGH-VALUES") == 0 ||
-           strcmp(s, "LOW-VALUE") == 0 || strcmp(s, "LOW-VALUES") == 0 ||
-           strcmp(s, "QUOTE") == 0 || strcmp(s, "QUOTES") == 0 ||
-           strcmp(s, "NULL") == 0 || strcmp(s, "NULLS") == 0;
+static bool is_id_comment_header(const std::string &s) {
+    static const std::unordered_set<std::string> headers = {
+        "AUTHOR", "INSTALLATION", "DATE-WRITTEN", "DATE-COMPILED", "SECURITY", "REMARKS"
+    };
+    return headers.count(s) > 0;
 }
 
-static int is_division_start(size_t idx) {
-    if (idx >= g_tokens->count) return 0;
-    const Token *t = &g_tokens->items[idx];
-    if (t->type != TOKEN_KEYWORD) return 0;
-    return strcmp(t->lexeme, "ENVIRONMENT") == 0 ||
-           strcmp(t->lexeme, "DATA") == 0 ||
-           strcmp(t->lexeme, "PROCEDURE") == 0;
+static bool is_figurative(const std::string &s) {
+    static const std::unordered_set<std::string> figs = {
+        "SPACE", "SPACES", "ZERO", "ZEROS", "ZEROES",
+        "HIGH-VALUE", "HIGH-VALUES", "LOW-VALUE", "LOW-VALUES",
+        "QUOTE", "QUOTES", "NULL", "NULLS"
+    };
+    return figs.count(s) > 0;
 }
 
-static int lookup_keyword(const char *s) {
-    for (int i = 0; kw_table[i].name != NULL; i++) {
-        if (strcmp(s, kw_table[i].name) == 0) return kw_table[i].token;
-    }
-    return 0;
+static bool is_division_start(size_t idx) {
+    if (idx >= g_tokens->size()) return false;
+    const Token &t = (*g_tokens)[idx];
+    if (t.type != TOKEN_KEYWORD) return false;
+    return t.lexeme == "ENVIRONMENT" || t.lexeme == "DATA" || t.lexeme == "PROCEDURE";
+}
+
+static int lookup_keyword(const std::string &s) {
+    const std::unordered_map<std::string, int> &m = keyword_map();
+    auto it = m.find(s);
+    return it != m.end() ? it->second : 0;
 }
 
 static int cob_lex(void) {
     if (g_pending_comment_text) {
         g_pending_comment_text = 0;
-        cob_lval.str = strdup(g_comment_buf);
+        cob_lval.str = strdup(g_comment_buf.c_str());
         return T_COMMENT_TEXT;
     }
 
-    if (!g_tokens || g_pos >= g_tokens->count) return 0;
+    if (!g_tokens || g_pos >= g_tokens->size()) return 0;
 
-    const Token *t = &g_tokens->items[g_pos++];
-    g_last_tok = *t;
+    const Token &t = (*g_tokens)[g_pos++];
+    g_last_tok = t;
 
-    if (t->type == TOKEN_KEYWORD) {
-        if (strcmp(t->lexeme, "IDENTIFICATION") == 0) {
+    if (t.type == TOKEN_KEYWORD) {
+        if (t.lexeme == "IDENTIFICATION") {
             g_in_ident_div = 1;
-        } else if (strcmp(t->lexeme, "ENVIRONMENT") == 0 ||
-                   strcmp(t->lexeme, "DATA") == 0 ||
-                   strcmp(t->lexeme, "PROCEDURE") == 0) {
+        } else if (t.lexeme == "ENVIRONMENT" || t.lexeme == "DATA" || t.lexeme == "PROCEDURE") {
             g_in_ident_div = 0;
         }
 
-        /* Handle IDENTIFICATION DIVISION free-text comment entries (AUTHOR., etc.) */
-        if (g_in_ident_div && is_id_comment_header(t->lexeme)) {
-            if (g_pos < g_tokens->count && g_tokens->items[g_pos].type == TOKEN_PERIOD) {
-                g_pos++; /* consume header '.' */
+        if (g_in_ident_div && is_id_comment_header(t.lexeme)) {
+            if (g_pos < g_tokens->size() && (*g_tokens)[g_pos].type == TOKEN_PERIOD) {
+                g_pos++;
             }
-            g_comment_buf[0] = '\0';
-            size_t len = 0;
-            while (g_pos < g_tokens->count) {
-                const Token *nt = &g_tokens->items[g_pos];
+            g_comment_buf.clear();
+            while (g_pos < g_tokens->size()) {
+                const Token &nt = (*g_tokens)[g_pos];
                 if (is_division_start(g_pos)) break;
-                if (nt->area == AREA_A && nt->type == TOKEN_KEYWORD &&
-                    (is_id_comment_header(nt->lexeme) || strcmp(nt->lexeme, "PROGRAM-ID") == 0)) {
+                if (nt.area == AREA_A && nt.type == TOKEN_KEYWORD &&
+                    (is_id_comment_header(nt.lexeme) || nt.lexeme == "PROGRAM-ID")) {
                     break;
                 }
-                if (len > 0 && len + 1 < sizeof(g_comment_buf)) {
-                    g_comment_buf[len++] = ' ';
-                }
-                size_t l = strlen(nt->lexeme);
-                if (len + l >= sizeof(g_comment_buf)) l = sizeof(g_comment_buf) - len - 1;
-                memcpy(g_comment_buf + len, nt->lexeme, l);
-                len += l;
-                g_comment_buf[len] = '\0';
+                if (!g_comment_buf.empty()) g_comment_buf.push_back(' ');
+                g_comment_buf.append(nt.lexeme);
                 g_pos++;
-                if (nt->type == TOKEN_PERIOD) {
-                    /* Stop if next token starts a new header or division */
-                    if (g_pos >= g_tokens->count || is_division_start(g_pos) ||
-                        (g_tokens->items[g_pos].area == AREA_A &&
-                         g_tokens->items[g_pos].type == TOKEN_KEYWORD &&
-                         is_id_comment_header(g_tokens->items[g_pos].lexeme))) {
+                if (nt.type == TOKEN_PERIOD) {
+                    if (g_pos >= g_tokens->size() || is_division_start(g_pos) ||
+                        ((*g_tokens)[g_pos].area == AREA_A &&
+                         (*g_tokens)[g_pos].type == TOKEN_KEYWORD &&
+                         is_id_comment_header((*g_tokens)[g_pos].lexeme))) {
                         break;
                     }
                 }
             }
-            if (len > 0) g_pending_comment_text = 1;
-            cob_lval.str = strdup(t->lexeme);
+            if (!g_comment_buf.empty()) g_pending_comment_text = 1;
+            cob_lval.str = strdup(t.lexeme.c_str());
             return T_ID_COMMENT_HDR;
         }
 
-        if (is_figurative(t->lexeme)) {
-            cob_lval.str = strdup(t->lexeme);
+        if (is_figurative(t.lexeme)) {
+            cob_lval.str = strdup(t.lexeme.c_str());
             return T_FIGURATIVE;
         }
 
-        int kw = lookup_keyword(t->lexeme);
+        int kw = lookup_keyword(t.lexeme);
         if (kw != 0) return kw;
 
-        /* Unmapped keyword falls back to identifier */
-        cob_lval.str = strdup(t->lexeme);
+        cob_lval.str = strdup(t.lexeme.c_str());
         return T_IDENTIFIER;
     }
 
-    switch (t->type) {
+    switch (t.type) {
         case TOKEN_IDENTIFIER:
-            cob_lval.str = strdup(t->lexeme);
+            cob_lval.str = strdup(t.lexeme.c_str());
             return T_IDENTIFIER;
         case TOKEN_LITERAL_NUMERIC:
-            cob_lval.str = strdup(t->lexeme);
+            cob_lval.str = strdup(t.lexeme.c_str());
             return T_NUM_LIT;
         case TOKEN_LITERAL_ALPHANUMERIC:
-            cob_lval.str = strdup(t->lexeme);
+            cob_lval.str = strdup(t.lexeme.c_str());
             return T_STR_LIT;
         case TOKEN_PICTURE:
-            cob_lval.str = strdup(t->lexeme);
+            cob_lval.str = strdup(t.lexeme.c_str());
             return T_PICTURE;
         case TOKEN_PERIOD:    return T_PERIOD;
         case TOKEN_COMMA:     return T_COMMA;
@@ -2252,31 +2235,32 @@ static int cob_lex(void) {
 
 static void cob_error(const char *msg) {
     g_errors++;
-    fprintf(stderr,
-            "[E] Syntax Error (%s, Seq %06d, Col %d): %s (near \"%s\")\n",
-            g_filename ? g_filename : "<input>",
-            g_last_tok.seq_num,
-            g_last_tok.column,
-            msg,
-            g_last_tok.lexeme);
+    std::fprintf(stderr,
+                 "[E] Syntax Error (%s, Seq %06d, Col %d): %s (near \"%s\")\n",
+                 g_filename ? g_filename : "<input>",
+                 g_last_tok.seq_num,
+                 g_last_tok.column,
+                 msg,
+                 g_last_tok.lexeme.c_str());
 }
 
-ASTNode *parse_tokens(const TokenList *tokens, const char *filename, int *error_count) {
-    g_tokens = tokens;
+ASTNode *parse_tokens(const TokenList &tokens, const std::string &filename, int *error_count) {
+    g_tokens = &tokens;
     g_pos = 0;
-    g_filename = filename;
+    g_filename = filename.c_str();
     g_errors = 0;
-    g_root = NULL;
+    g_root = nullptr;
     g_in_ident_div = 0;
     g_pending_comment_text = 0;
-    memset(&g_last_tok, 0, sizeof(g_last_tok));
+    g_comment_buf.clear();
+    g_last_tok = Token();
 
     int rc = cob_parse();
     if (error_count) *error_count = g_errors;
     if (rc != 0 || g_errors > 0) {
         ast_free(g_root);
-        g_root = NULL;
-        return NULL;
+        g_root = nullptr;
+        return nullptr;
     }
     return g_root;
 }

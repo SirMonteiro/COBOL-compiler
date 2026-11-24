@@ -1,18 +1,15 @@
 #include "ast.h"
+#include "util.h"
 
-#include <stdlib.h>
-#include <string.h>
+bool ASTNode::is_clause(const std::string &name) const {
+    return kind == AST_CLAUSE && !text.empty() && ci_eq(text, name);
+}
 
-static char *xstrdup(const char *s) {
-    if (!s) return NULL;
-    size_t n = strlen(s) + 1;
-    char *copy = (char *)malloc(n);
-    if (!copy) {
-        fprintf(stderr, "[S] ERROR: Out of memory.\n");
-        exit(EXIT_FAILURE);
+const ASTNode *ASTNode::find_clause(const std::string &name, size_t start) const {
+    for (size_t i = start; i < children.size(); i++) {
+        if (children[i] && children[i]->is_clause(name)) return children[i];
     }
-    memcpy(copy, s, n);
-    return copy;
+    return nullptr;
 }
 
 const char *ast_kind_name(ASTKind kind) {
@@ -92,88 +89,68 @@ const char *ast_kind_name(ASTKind kind) {
 }
 
 ASTNode *ast_new_ex(ASTKind kind, const char *text, const char *extra, int ival, int seq_num, int col) {
-    ASTNode *n = (ASTNode *)calloc(1, sizeof(ASTNode));
-    if (!n) {
-        fprintf(stderr, "[S] ERROR: Out of memory.\n");
-        exit(EXIT_FAILURE);
-    }
+    ASTNode *n = new ASTNode();
     n->kind = kind;
     n->seq_num = seq_num;
     n->col = col;
     n->ival = ival;
-    n->text = xstrdup(text);
-    n->extra = xstrdup(extra);
+    if (text) n->text = text;
+    if (extra) n->extra = extra;
     return n;
 }
 
 ASTNode *ast_new(ASTKind kind, const char *text, int seq_num, int col) {
-    return ast_new_ex(kind, text, NULL, 0, seq_num, col);
+    return ast_new_ex(kind, text, nullptr, 0, seq_num, col);
+}
+
+ASTNode *ast_new(ASTKind kind, const std::string &text, int seq_num, int col) {
+    return ast_new_ex(kind, text.empty() ? nullptr : text.c_str(), nullptr, 0, seq_num, col);
 }
 
 ASTNode *ast_add(ASTNode *parent, ASTNode *child) {
-    if (!parent || !child) return parent;
-    if (parent->child_count >= parent->child_cap) {
-        size_t new_cap = parent->child_cap ? parent->child_cap * 2 : 4;
-        ASTNode **next = (ASTNode **)realloc(parent->children, new_cap * sizeof(ASTNode *));
-        if (!next) {
-            fprintf(stderr, "[S] ERROR: Out of memory.\n");
-            exit(EXIT_FAILURE);
-        }
-        parent->children = next;
-        parent->child_cap = new_cap;
-    }
-    parent->children[parent->child_count++] = child;
+    if (parent && child) parent->children.push_back(child);
     return parent;
 }
 
 ASTNode *ast_adopt_children(ASTNode *parent, ASTNode *list_node) {
     if (!parent || !list_node) return parent;
-    for (size_t i = 0; i < list_node->child_count; i++) {
-        ast_add(parent, list_node->children[i]);
+    for (size_t i = 0; i < list_node->children.size(); i++) {
+        parent->children.push_back(list_node->children[i]);
     }
-    list_node->child_count = 0;
-    ast_free(list_node);
+    list_node->children.clear();
+    delete list_node;
     return parent;
 }
 
 void ast_set_text(ASTNode *node, const char *text) {
     if (!node) return;
-    free(node->text);
-    node->text = xstrdup(text);
+    node->text = text ? text : "";
 }
 
 void ast_set_extra(ASTNode *node, const char *extra) {
     if (!node) return;
-    free(node->extra);
-    node->extra = xstrdup(extra);
+    node->extra = extra ? extra : "";
 }
 
 void ast_print(const ASTNode *node, FILE *out, int indent) {
     if (!node) return;
-    for (int i = 0; i < indent; i++) fputs("  ", out);
-    fprintf(out, "%s", ast_kind_name(node->kind));
+    for (int i = 0; i < indent; i++) std::fputs("  ", out);
+    std::fprintf(out, "%s", ast_kind_name(node->kind));
     if (node->kind == AST_DATA_ITEM && node->ival > 0) {
-        fprintf(out, " (level=%02d)", node->ival);
+        std::fprintf(out, " (level=%02d)", node->ival);
     } else if (node->ival != 0) {
-        fprintf(out, " (%d)", node->ival);
+        std::fprintf(out, " (%d)", node->ival);
     }
-    if (node->text)  fprintf(out, " [%s]", node->text);
-    if (node->extra) fprintf(out, " <%s>", node->extra);
-    if (node->seq_num > 0) fprintf(out, " @%d:%d", node->seq_num, node->col);
-    fputc('\n', out);
+    if (!node->text.empty())  std::fprintf(out, " [%s]", node->text.c_str());
+    if (!node->extra.empty()) std::fprintf(out, " <%s>", node->extra.c_str());
+    if (node->seq_num > 0) std::fprintf(out, " @%d:%d", node->seq_num, node->col);
+    std::fputc('\n', out);
 
-    for (size_t i = 0; i < node->child_count; i++) {
+    for (size_t i = 0; i < node->children.size(); i++) {
         ast_print(node->children[i], out, indent + 1);
     }
 }
 
 void ast_free(ASTNode *node) {
-    if (!node) return;
-    for (size_t i = 0; i < node->child_count; i++) {
-        ast_free(node->children[i]);
-    }
-    free(node->children);
-    free(node->text);
-    free(node->extra);
-    free(node);
+    delete node;
 }

@@ -1,13 +1,13 @@
 #ifndef SEMA_H
 #define SEMA_H
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdio.h>
+#include <cstdio>
+#include <string>
+#include <vector>
 
 #include "ast.h"
 
-typedef enum {
+enum DataKind {
     DATA_UNKNOWN = 0,
     DATA_GROUP,
     DATA_ALPHA,          /* PIC A */
@@ -16,61 +16,52 @@ typedef enum {
     DATA_ALPHANUMERIC,   /* PIC X */
     DATA_INDEX,          /* INDEXED BY */
     DATA_COND            /* Level 88 */
-} DataKind;
+};
 
-typedef struct {
-    char name[64];
-    int level;
-    int parent_idx;      /* -1 for top-level (01 / 77 / INDEXED BY) */
-    int fd_idx;          /* -1 unless declared under an FD/SD */
-    DataKind kind;
-    char pic[64];
-    int seq_num;
-    int col;
-} DataSym;
+struct DataSym {
+    std::string name;
+    int level = 0;
+    int parent_idx = -1; /* -1 for top-level (01 / 77 / INDEXED BY) */
+    int fd_idx = -1;     /* -1 unless declared under an FD/SD */
+    DataKind kind = DATA_UNKNOWN;
+    std::string pic;
+    int seq_num = 0;
+    int col = 0;
+};
 
-typedef struct {
-    char name[64];
-    bool has_select;
-    bool has_fd;
-    int select_seq;
-    int select_col;
-    int fd_seq;
-    int fd_col;
-} FileSym;
+struct FileSym {
+    std::string name;
+    bool has_select = false;
+    bool has_fd = false;
+    int select_seq = 0;
+    int select_col = 0;
+    int fd_seq = 0;
+    int fd_col = 0;
+};
 
-typedef struct {
-    char name[64];
-    bool is_section;
-    int seq_num;
-    int col;
-} ProcSym;
+struct ProcSym {
+    std::string name;
+    bool is_section = false;
+    int seq_num = 0;
+    int col = 0;
+};
 
-typedef struct {
-    DataSym *data;
-    size_t data_count;
-    size_t data_cap;
+struct SymTab {
+    std::vector<DataSym> data;
+    std::vector<FileSym> files;
+    std::vector<ProcSym> procs;
+    int errors = 0;
+    int warnings = 0;
 
-    FileSym *files;
-    size_t file_count;
-    size_t file_cap;
-
-    ProcSym *procs;
-    size_t proc_count;
-    size_t proc_cap;
-
-    int errors;
-    int warnings;
-} SymTab;
+    int find_file(const std::string &name) const;
+    int find_proc(const std::string &name) const;
+};
 
 const char *data_kind_to_string(DataKind kind);
-
-void symtab_init(SymTab *tab);
-void symtab_free(SymTab *tab);
-void symtab_print(const SymTab *tab, FILE *out);
+void symtab_print(const SymTab &tab, FILE *out);
 
 /* Run Section 4 semantic checks on the AST and populate SymTab.
  * Returns true if zero semantic errors occurred (warnings are non-fatal). */
-bool sema_analyze(const ASTNode *root, const char *filename, SymTab *out_tab);
+bool sema_analyze(const ASTNode *root, const std::string &filename, SymTab &out_tab);
 
 #endif /* SEMA_H */

@@ -1,10 +1,11 @@
 #ifndef AST_H
 #define AST_H
 
-#include <stdio.h>
-#include <stddef.h>
+#include <cstdio>
+#include <string>
+#include <vector>
 
-typedef enum {
+enum ASTKind {
     AST_PROGRAM,
     AST_IDENTIFICATION,
     AST_ID_ENTRY,
@@ -79,23 +80,29 @@ typedef enum {
     AST_COND_NOT,
     AST_COND_CLASS,
     AST_LIST
-} ASTKind;
+};
 
-typedef struct ASTNode {
-    ASTKind kind;
-    int seq_num;
-    int col;
-    int ival;
-    char *text;
-    char *extra;
-    struct ASTNode **children;
-    size_t child_count;
-    size_t child_cap;
-} ASTNode;
+struct ASTNode {
+    ASTKind kind = AST_PROGRAM;
+    int seq_num = 0;
+    int col = 0;
+    int ival = 0;
+    std::string text;
+    std::string extra;
+    std::vector<ASTNode *> children;
+
+    ~ASTNode() {
+        for (size_t i = 0; i < children.size(); i++) delete children[i];
+    }
+
+    bool is_clause(const std::string &name) const;
+    const ASTNode *find_clause(const std::string &name, size_t start = 0) const;
+};
 
 const char *ast_kind_name(ASTKind kind);
 
 ASTNode *ast_new(ASTKind kind, const char *text, int seq_num, int col);
+ASTNode *ast_new(ASTKind kind, const std::string &text, int seq_num, int col);
 ASTNode *ast_new_ex(ASTKind kind, const char *text, const char *extra, int ival, int seq_num, int col);
 ASTNode *ast_add(ASTNode *parent, ASTNode *child);
 ASTNode *ast_adopt_children(ASTNode *parent, ASTNode *list_node);
